@@ -1,0 +1,6 @@
+{
+  "type": "replay_gap",
+  "requestedAfterSequence": 1,
+  "earliestSequence": 12,
+  "latestSequence": 44
+}

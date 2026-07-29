@@ -32,6 +32,7 @@
       <ul>
         <li><a href="#architecture">Architecture</a></li>
         <li><a href="#design-principles">Design Principles</a></li>
+        <li><a href="#contracts">Contracts</a></li>
         <li><a href="#built-with">Built With</a></li>
       </ul>
     </li>
@@ -88,6 +89,12 @@ The control plane manages durable agent lifecycle through a REST API. Interactiv
 - **Private by default.** Sandboxes are internal workloads with explicit ingress and controlled egress.
 - **Kubernetes-native lifecycle.** Scheduling, storage, policies, and runtime isolation use existing Kubernetes primitives.
 - **Progressive isolation.** Start with containers and opt into gVisor or Kata Containers where stronger boundaries are required.
+
+### Contracts
+
+- [REST lifecycle API](api/openapi.yaml)
+- [Terminal attachment protocol](api/terminal.md)
+- [Resource and API model](docs/adr/0001-resource-and-api-model.md)
 
 ### Built With
 
