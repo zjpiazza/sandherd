@@ -1,0 +1,831 @@
+openapi: 3.1.0
+info:
+  title: Sandherd API
+  version: 1.0.0-alpha.1
+  summary: Lifecycle and attachment API for isolated persistent agents
+  description: |
+    Sandherd manages durable logical agents backed by isolated Kubernetes Agent
+    Sandbox workloads. Kubernetes resource names, Pod addresses, and router
+    credentials are intentionally absent from this API.
+
+    All operations require an authenticated principal. Authorization is evaluated
+    against agent ownership and requested operation. Error messages are intended
+    for humans; clients must branch on the stable error code.
+externalDocs:
+  description: Resource and API model ADR
+  url: https://github.com/zjpiazza/sandherd/blob/main/docs/adr/0001-resource-and-api-model.md
+servers:
+  - url: https://sandherd.example.com
+    description: Example deployment
+tags:
+  - name: Agents
+    description: Durable logical agent lifecycle
+  - name: Events
+    description: Lifecycle event subscriptions
+  - name: Terminal
+    description: Ephemeral terminal attachments
+security:
+  - bearerAuth: []
+paths:
+  /v1alpha1/agents:
+    post:
+      tags: [Agents]
+      operationId: createAgent
+      summary: Create an agent
+      description: |
+        Creates one durable logical agent and begins provisioning its isolated
+        sandbox. `Idempotency-Key` is scoped to the authenticated owner. Reusing
+        a key with an identical canonical request returns the original agent;
+        reusing it with a different request returns `idempotency_conflict`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRequest'
+            examples:
+              codex:
+                summary: Persistent Codex agent
+                value:
+                  name: api-refactor
+                  spec:
+                    kind: codex
+                    sandboxProfile: standard
+                    repository:
+                      url: https://github.com/example/project.git
+                      revision: main
+                    resources:
+                      cpu: '2'
+                      memory: 4Gi
+                    workspace:
+                      size: 20Gi
+                      storageProfile: default
+                      retentionPolicy: retain
+                    secretProfile: personal-agents
+                    lifecycle:
+                      idleTimeoutSeconds: 3600
+      responses:
+        '201':
+          description: Agent created and provisioning started
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Location:
+              description: Canonical Agent URL
+              schema:
+                type: string
+                format: uri-reference
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Name or idempotency conflict
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                idempotencyConflict:
+                  value:
+                    error:
+                      code: idempotency_conflict
+                      message: The idempotency key was used with a different request.
+                      requestId: 019c1234-1234-7123-8123-123456789abc
+                      retryable: false
+                      details: {}
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [Agents]
+      operationId: listAgents
+      summary: List agents owned by the authenticated principal
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: limit
+          in: query
+          description: Maximum number of agents to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          description: Opaque cursor returned by a previous response
+          schema:
+            type: string
+            minLength: 1
+        - name: state
+          in: query
+          description: Return agents in this state
+          schema:
+            $ref: '#/components/schemas/AgentState'
+        - name: name
+          in: query
+          description: Return an agent with this exact owner-scoped name
+          schema:
+            $ref: '#/components/schemas/AgentName'
+      responses:
+        '200':
+          description: Stable page ordered by creation time and ID
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1alpha1/agents/{agentId}:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    get:
+      tags: [Agents]
+      operationId: getAgent
+      summary: Get one agent
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Current desired and observed agent state
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Agents]
+      operationId: deleteAgent
+      summary: Delete an agent and apply its workspace retention policy
+      description: |
+        Deletion is asynchronous and idempotent. It terminates the agent process,
+        removes the sandbox, and either deletes or retains the workspace according
+        to `spec.workspace.retentionPolicy`.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '202':
+          description: Deletion accepted or already in progress
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1alpha1/agents/{agentId}:stop:
+    post:
+      tags: [Agents]
+      operationId: stopAgent
+      summary: Stop an agent while preserving its logical identity and workspace
+      description: |
+        Gracefully terminates the agent process and requests sandbox suspension.
+        Terminal disconnect does not invoke this operation. The operation is
+        idempotent when the agent is already stopping or stopped.
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '202':
+          $ref: '#/components/responses/AgentMutationAccepted'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidStateTransition'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1alpha1/agents/{agentId}:resume:
+    post:
+      tags: [Agents]
+      operationId: resumeAgent
+      summary: Resume a stopped agent using its durable workspace
+      description: |
+        Restores sandbox compute if necessary and starts the configured agent,
+        using a supported native agent session reference when available. The
+        operation is idempotent when the agent is already provisioning, starting,
+        or running.
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '202':
+          $ref: '#/components/responses/AgentMutationAccepted'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidStateTransition'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1alpha1/events:
+    get:
+      tags: [Events]
+      operationId: watchAgentEvents
+      summary: Subscribe to lifecycle events for agents visible to the caller
+      description: |
+        Returns a server-sent event stream. Clients may reconnect with
+        `Last-Event-ID`. Terminal bytes are never included.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: Last-Event-ID
+          in: header
+          description: Last completely processed event ID
+          schema:
+            type: string
+            minLength: 1
+        - name: agentId
+          in: query
+          description: Restrict events to one visible agent
+          schema:
+            $ref: '#/components/schemas/AgentId'
+      responses:
+        '200':
+          description: Server-sent lifecycle event stream
+          headers:
+            Cache-Control:
+              description: Streams are not cached
+              schema:
+                type: string
+                const: no-cache
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgentEvent'
+              examples:
+                stateChanged:
+                  value:
+                    id: 019c1234-1234-7123-8123-123456789ac2
+                    type: agent.state_changed
+                    agentId: 019c1234-1234-7123-8123-123456789abc
+                    previousState: starting
+                    state: running
+                    occurredAt: '2026-07-29T19:00:00Z'
+
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '410':
+          description: The requested event cursor is no longer available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1alpha1/agents/{agentId}/terminal:
+    get:
+      tags: [Terminal]
+      operationId: attachAgentTerminal
+      summary: Upgrade to the Sandherd terminal WebSocket protocol
+      description: |
+        The client must offer the `sandherd.terminal.v1alpha1` WebSocket
+        subprotocol and send an `attach` frame first. The complete frame contract
+        is defined in `api/terminal.schema.json`.
+
+        Disconnecting this attachment never stops or deletes the agent.
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '101':
+          description: WebSocket upgrade accepted
+          headers:
+            Sec-WebSocket-Protocol:
+              description: Negotiated terminal protocol
+              required: true
+              schema:
+                type: string
+                const: sandherd.terminal.v1alpha1
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+        '400':
+          description: Missing or unsupported WebSocket protocol
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidStateTransition'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: deployment-defined
+      description: |
+        Deployment-selected bearer credential. Token implementation and issuer
+        configuration are not fixed by v1alpha1.
+  parameters:
+    AgentId:
+      name: agentId
+      in: path
+      required: true
+      description: Opaque public UUIDv7 agent identifier
+      schema:
+        $ref: '#/components/schemas/AgentId'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Owner-scoped key retained with the canonical create request
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._~-]+$'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: ETag from a prior Agent response; stale values are rejected
+      schema:
+        type: string
+        minLength: 1
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: Caller-provided correlation ID; the server generates one when absent
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  headers:
+    ETag:
+      description: Opaque entity tag derived from the current resource version
+      required: true
+      schema:
+        type: string
+        example: '"189452"'
+    RequestId:
+      description: Correlation ID for logs, events, and support
+      required: true
+      schema:
+        type: string
+        example: 019c1234-1234-7123-8123-123456789abc
+  responses:
+    AgentMutationAccepted:
+      description: Lifecycle mutation accepted
+      headers:
+        ETag:
+          $ref: '#/components/headers/ETag'
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Agent'
+    BadRequest:
+      description: Malformed request, parameter, cursor, or JSON document
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthenticated:
+      description: Missing or invalid authentication credential
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missingCredential:
+              value:
+                error:
+                  code: unauthenticated
+                  message: A valid bearer credential is required.
+                  requestId: 019c1234-1234-7123-8123-123456789abc
+                  retryable: false
+                  details: {}
+    Forbidden:
+      description: The authenticated principal cannot perform this operation
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Agent not found or not visible to the authenticated principal
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidStateTransition:
+      description: The requested operation is invalid for the current state
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            deleting:
+              value:
+                error:
+                  code: invalid_state_transition
+                  message: An agent being deleted cannot be resumed.
+                  requestId: 019c1234-1234-7123-8123-123456789abc
+                  retryable: false
+                  details:
+                    currentState: deleting
+                    requestedOperation: resume
+    PreconditionFailed:
+      description: The supplied ETag does not match the current Agent version
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableEntity:
+      description: The document is syntactically valid but violates resource rules
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Request or concurrent attachment limit exceeded
+      headers:
+        Retry-After:
+          description: Suggested delay in seconds
+          schema:
+            type: integer
+            minimum: 1
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal failure with no secret or Kubernetes detail exposed
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    AgentId:
+      type: string
+      format: uuid
+      description: Server-generated UUIDv7 treated as opaque by clients
+      examples: [019c1234-1234-7123-8123-123456789abc]
+    AgentName:
+      type: string
+      minLength: 1
+      maxLength: 63
+      pattern: '^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$'
+      examples: [api-refactor]
+    AgentState:
+      type: string
+      enum:
+        - requested
+        - provisioning
+        - starting
+        - running
+        - stopping
+        - stopped
+        - failed
+        - deleting
+    Agent:
+      type: object
+      additionalProperties: false
+      required:
+        - apiVersion
+        - id
+        - name
+        - owner
+        - generation
+        - spec
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        apiVersion:
+          type: string
+          const: v1alpha1
+        id:
+          $ref: '#/components/schemas/AgentId'
+        name:
+          $ref: '#/components/schemas/AgentName'
+        owner:
+          type: string
+          description: Stable authenticated-principal identifier
+          minLength: 1
+        generation:
+          type: integer
+          minimum: 1
+          description: Desired-state generation
+        spec:
+          $ref: '#/components/schemas/AgentSpec'
+        status:
+          $ref: '#/components/schemas/AgentStatus'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateAgentRequest:
+      type: object
+      additionalProperties: false
+      required: [name, spec]
+      properties:
+        name:
+          $ref: '#/components/schemas/AgentName'
+        spec:
+          $ref: '#/components/schemas/AgentSpec'
+    AgentSpec:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - sandboxProfile
+        - resources
+        - workspace
+        - lifecycle
+      properties:
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+          description: Server-configured agent implementation such as codex
+          examples: [codex]
+        sandboxProfile:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+          description: Public policy profile, not a raw Kubernetes template name
+          examples: [standard]
+        repository:
+          $ref: '#/components/schemas/RepositorySpec'
+        resources:
+          $ref: '#/components/schemas/ResourceSpec'
+        workspace:
+          $ref: '#/components/schemas/WorkspaceSpec'
+        secretProfile:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+          description: Policy-controlled reference; never secret material
+        lifecycle:
+          $ref: '#/components/schemas/LifecycleSpec'
+    RepositorySpec:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          pattern: '^(https|ssh)://'
+          description: HTTPS or SSH repository URL
+        revision:
+          type: string
+          minLength: 1
+          maxLength: 256
+          default: HEAD
+    ResourceSpec:
+      type: object
+      additionalProperties: false
+      required: [cpu, memory]
+      properties:
+        cpu:
+          type: string
+          minLength: 1
+          description: Kubernetes-compatible CPU quantity constrained by policy
+          examples: ['2', 500m]
+        memory:
+          type: string
+          minLength: 1
+          description: Kubernetes-compatible memory quantity constrained by policy
+          examples: [4Gi]
+    WorkspaceSpec:
+      type: object
+      additionalProperties: false
+      required: [size, retentionPolicy]
+      properties:
+        size:
+          type: string
+          minLength: 1
+          description: Kubernetes-compatible storage quantity constrained by policy
+          examples: [20Gi]
+        storageProfile:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+          default: default
+          description: Public storage policy, not a raw StorageClass name
+        retentionPolicy:
+          type: string
+          enum: [delete, retain]
+          default: delete
+    LifecycleSpec:
+      type: object
+      additionalProperties: false
+      required: [idleTimeoutSeconds]
+      properties:
+        idleTimeoutSeconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          description: Zero disables automatic idle stop
+          default: 0
+    AgentStatus:
+      type: object
+      additionalProperties: false
+      required: [state, observedGeneration]
+      properties:
+        state:
+          $ref: '#/components/schemas/AgentState'
+        observedGeneration:
+          type: integer
+          minimum: 0
+        reason:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+        message:
+          type: string
+          maxLength: 1024
+          description: Human-readable and safe to expose; not stable API
+        readyAt:
+          type: string
+          format: date-time
+        stoppedAt:
+          type: string
+          format: date-time
+        lastTransitionAt:
+          type: string
+          format: date-time
+    AgentList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
+        nextCursor:
+          type: string
+          minLength: 1
+    AgentEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, agentId, occurredAt]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum:
+            - agent.created
+            - agent.state_changed
+            - agent.controller_taken_over
+            - agent.deleted
+        agentId:
+          $ref: '#/components/schemas/AgentId'
+        previousState:
+          $ref: '#/components/schemas/AgentState'
+        state:
+          $ref: '#/components/schemas/AgentState'
+        occurredAt:
+          type: string
+          format: date-time
+        requestId:
+          type: string
+          minLength: 1
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, requestId, retryable, details]
+      properties:
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          description: Stable machine-readable error code
+        message:
+          type: string
+          minLength: 1
+          description: Human-readable message; not stable API
+        requestId:
+          type: string
+          minLength: 1
+        retryable:
+          type: boolean
+        details:
+          type: object
+          additionalProperties: true
+          description: Code-specific safe metadata

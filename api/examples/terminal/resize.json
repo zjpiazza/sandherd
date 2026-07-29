@@ -1,0 +1,8 @@
+{
+  "type": "resize",
+  "leaseId": "019c1234-1234-7123-8123-123456789abe",
+  "terminalSize": {
+    "columns": 160,
+    "rows": 48
+  }
+}

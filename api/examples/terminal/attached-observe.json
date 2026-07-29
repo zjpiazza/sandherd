@@ -1,0 +1,10 @@
+{
+  "type": "attached",
+  "attachmentId": "019c1234-1234-7123-8123-123456789ac0",
+  "agentId": "019c1234-1234-7123-8123-123456789abc",
+  "role": "observe",
+  "runnerGeneration": "019c1234-1234-7123-8123-123456789abf",
+  "earliestSequence": 12,
+  "latestSequence": 44,
+  "processState": "running"
+}
