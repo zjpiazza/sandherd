@@ -44,6 +44,7 @@
       </ul>
     </li>
     <li><a href="#usage">Usage</a></li>
+    <li><a href="#development">Development</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
@@ -123,6 +124,8 @@ The initial deployment target requires:
 
 gVisor or Kata Containers are recommended for running untrusted workloads, but they will not be required for the first development deployment.
 
+Developing Sandherd itself requires Go 1.26 or newer, Node.js 24 for contract validation, and Docker with BuildKit for container builds. See the [local development guide](docs/development.md) for the repository layout and commands.
+
 ### Installation
 
 Installation instructions will be added after the first end-to-end release. The intended installation path is a Helm chart with optional GitOps examples.
@@ -141,6 +144,18 @@ The planned workflow is deliberately independent of any particular user interfac
 6. Sandherd suspends, resumes, or deletes the sandbox according to policy.
 
 The first integration will map Herdr panes and agent states onto this lifecycle while keeping Kubernetes credentials out of the Herdr client.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Development
+
+Run the complete local verification suite with one command:
+
+```sh
+make verify
+```
+
+The `control-plane`, `runner`, and `herdr-bridge` command scaffolds build locally and expose `--version` without contacting Kubernetes or any other external dependency. Detailed setup, build, container, and CI instructions are in the [development guide](docs/development.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -164,15 +179,7 @@ See the [open issues][issues-url] for proposed features and known issues.
 
 ## Contributing
 
-Sandherd is at an early stage, so design feedback and focused prototypes are especially valuable.
-
-1. Fork the project.
-2. Create a feature branch (`git checkout -b feature/your-feature`).
-3. Commit your changes (`git commit -m 'Add your feature'`).
-4. Push the branch (`git push origin feature/your-feature`).
-5. Open a pull request.
-
-Please open an issue before beginning a large architectural change so the approach can be discussed first.
+Sandherd is at an early stage, so design feedback and focused prototypes are especially valuable. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for branch names, required checks, commit guidance, and issue-linked pull requests. Open an issue before beginning a large architectural change so the approach can be discussed first.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
