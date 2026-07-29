@@ -15,6 +15,8 @@ cmd/runner/             In-sandbox agent process entry point
 cmd/herdr-bridge/       Herdr integration entry point
 build/agent-sandbox-router/ Pinned upstream router image build
 deploy/agent-sandbox/   Kustomize, Flux, policy, and smoke resources
+deploy/control-plane/   Agent CRD, API deployment, RBAC, and network policy
+deploy/control-plane-homelab/ Cilium overlay for the Talos homelab
 internal/api/           Transport-neutral API types
 internal/auth/          Authentication and authorization boundary
 internal/kubernetes/    Kubernetes and Agent Sandbox adapter boundary
@@ -59,8 +61,9 @@ The runtime container targets are `control-plane`, `runner`, and
 user and group `65532:65532`, and intentionally contain neither a shell nor the
 Go compiler.
 
-The runner is implemented rather than scaffolded. Its complete command-line and
-internal API contract are documented in the [runner guide](runner.md).
+The runner's complete command-line and internal API contract are documented in
+the [runner guide](runner.md). The lifecycle API and Kubernetes controller are
+documented in the [control-plane guide](control-plane.md).
 
 ## CI and generated files
 

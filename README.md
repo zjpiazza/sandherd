@@ -96,6 +96,7 @@ The control plane manages durable agent lifecycle through a REST API. Interactiv
 - [REST lifecycle API](api/openapi.yaml)
 - [Terminal attachment protocol](api/terminal.md)
 - [In-sandbox runner protocol and operations](docs/runner.md)
+- [Lifecycle control plane](docs/control-plane.md)
 - [Resource and API model](docs/adr/0001-resource-and-api-model.md)
 - [Agent Sandbox cluster foundation](docs/platform/agent-sandbox.md)
 
@@ -157,7 +158,7 @@ Run the complete local verification suite with one command:
 make verify
 ```
 
-The `control-plane`, `runner`, and `herdr-bridge` command scaffolds build locally and expose `--version` without contacting Kubernetes or any other external dependency. Detailed setup, build, container, and CI instructions are in the [development guide](docs/development.md).
+The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` command build locally and expose `--version` without contacting Kubernetes or any other external dependency. Detailed setup, build, container, and CI instructions are in the [development guide](docs/development.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

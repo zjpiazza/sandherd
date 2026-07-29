@@ -1,0 +1,17 @@
+# Cilium evaluates Kubernetes Service traffic after translation to Talos
+# host-network endpoints, so the portable namespace selector cannot match it.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: sandherd-control-plane-api
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandherd-control-plane
+  egress:
+    - toEntities:
+        - kube-apiserver

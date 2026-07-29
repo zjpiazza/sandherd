@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandherd-control-plane
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandherd-control-plane
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: sandherd-system
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443

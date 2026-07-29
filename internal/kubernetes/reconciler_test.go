@@ -1,0 +1,218 @@
+package kubernetes
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/dynamic"
+)
+
+func TestReconcilerLifecycleAndRestartRecovery(t *testing.T) {
+	ctx := context.Background()
+	client := fakeClient()
+	repository := NewRepository(client, testNamespace)
+	events := lifecycle.NewEventBus(32)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "approved-pool"}, events, logger)
+	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	claim, err := client.Resource(SandboxClaimGVR).Namespace(testNamespace).Get(ctx, claimName(agent.ID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get claim: %v", err)
+	}
+	pool, _, _ := unstructured.NestedString(claim.Object, "spec", "warmPoolRef", "name")
+	if pool != "approved-pool" || claim.GetLabels()[AgentIDLabel] != agent.ID {
+		t.Fatalf("claim = %#v", claim.Object)
+	}
+	agent, _ = repository.Get(ctx, "owner", agent.ID)
+	if agent.Status.State != lifecycle.StateProvisioning {
+		t.Fatalf("state = %s, want provisioning", agent.Status.State)
+	}
+
+	markClaimReady(t, ctx, client, claim, "sandbox-one")
+	createReadySandbox(t, ctx, client, agent.ID, "sandbox-one")
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("ready reconcile: %v", err)
+	}
+	agent, _ = repository.Get(ctx, "owner", agent.ID)
+	if agent.Status.State != lifecycle.StateRunning || agent.Status.ReadyAt == nil {
+		t.Fatalf("ready agent = %#v", agent.Status)
+	}
+
+	// A new reconciler represents a control-plane restart. It observes and adopts
+	// the existing deterministic claim rather than creating another sandbox.
+	restarted := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "approved-pool"}, events, logger)
+	if err := restarted.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("restart reconcile: %v", err)
+	}
+	claims, _ := client.Resource(SandboxClaimGVR).Namespace(testNamespace).List(ctx, metav1.ListOptions{})
+	if len(claims.Items) != 1 {
+		t.Fatalf("claims after restart = %d, want 1", len(claims.Items))
+	}
+
+	agent, err = repository.SetDesired(ctx, "owner", agent.ID, "", lifecycle.DesiredStopped, lifecycle.StateStopping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("stop reconcile: %v", err)
+	}
+	sandbox, _ := client.Resource(SandboxGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
+	replicas, _, _ := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+	if replicas != 0 {
+		t.Fatalf("desired sandbox replicas = %d, want 0", replicas)
+	}
+	_ = unstructured.SetNestedField(sandbox.Object, int64(0), "status", "replicas")
+	_, _ = client.Resource(SandboxGVR).Namespace(testNamespace).UpdateStatus(ctx, sandbox, metav1.UpdateOptions{})
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("stopped reconcile: %v", err)
+	}
+	agent, _ = repository.Get(ctx, "owner", agent.ID)
+	if agent.Status.State != lifecycle.StateStopped || agent.Status.StoppedAt == nil {
+		t.Fatalf("stopped agent = %#v", agent.Status)
+	}
+
+	agent, err = repository.SetDesired(ctx, "owner", agent.ID, "", lifecycle.DesiredRunning, lifecycle.StateProvisioning)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("resume reconcile: %v", err)
+	}
+	sandbox, _ = client.Resource(SandboxGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
+	replicas, _, _ = unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
+	if replicas != 1 {
+		t.Fatalf("resumed sandbox replicas = %d, want 1", replicas)
+	}
+	pod, _ := client.Resource(PodGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
+	_ = unstructured.SetNestedField(pod.Object, "Failed", "status", "phase")
+	_, _ = client.Resource(PodGVR).Namespace(testNamespace).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("failed pod reconcile: %v", err)
+	}
+	agent, _ = repository.Get(ctx, "owner", agent.ID)
+	if agent.Status.State != lifecycle.StateFailed || agent.Status.Reason != "runner_failed" {
+		t.Fatalf("failed runner agent = %#v", agent.Status)
+	}
+}
+
+func TestReconcilerRetainsWorkspaceAndFinalizesDeletion(t *testing.T) {
+	ctx := context.Background()
+	client := fakeClient()
+	repository := NewRepository(client, testNamespace)
+	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, lifecycle.NewEventBus(8), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	pvc := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+		"metadata": map[string]any{
+			"name": "workspace-one", "namespace": testNamespace,
+			"labels":          map[string]any{AgentIDLabel: agent.ID},
+			"ownerReferences": []any{map[string]any{"apiVersion": "v1", "kind": "Pod", "name": "owner", "uid": "uid"}},
+		},
+	}}
+	if _, err := client.Resource(PVCGVR).Namespace(testNamespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.SetDesired(ctx, "owner", agent.ID, "", lifecycle.DesiredDeleted, lifecycle.StateDeleting); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("delete claim reconcile: %v", err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatalf("finalize agent reconcile: %v", err)
+	}
+	if _, err := repository.Get(ctx, "owner", agent.ID); errorCode(err) != "agent_not_found" {
+		t.Fatalf("deleted agent lookup = %v", err)
+	}
+	preserved, err := client.Resource(PVCGVR).Namespace(testNamespace).Get(ctx, "workspace-one", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("retained PVC: %v", err)
+	}
+	if len(preserved.GetOwnerReferences()) != 0 {
+		t.Fatalf("retained PVC owner references = %#v", preserved.GetOwnerReferences())
+	}
+}
+
+func TestReconcilerRecreatesMissingClaimWithoutDuplicates(t *testing.T) {
+	ctx := context.Background()
+	client := fakeClient()
+	repository := NewRepository(client, testNamespace)
+	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	agent, _, _ := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
+	_ = reconciler.Reconcile(ctx, agent.ID)
+	_ = client.Resource(SandboxClaimGVR).Namespace(testNamespace).Delete(ctx, claimName(agent.ID), metav1.DeleteOptions{})
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	claims, _ := client.Resource(SandboxClaimGVR).Namespace(testNamespace).List(ctx, metav1.ListOptions{})
+	if len(claims.Items) != 1 || claims.Items[0].GetName() != claimName(agent.ID) {
+		t.Fatalf("recreated claims = %#v", claims.Items)
+	}
+}
+
+func TestReconcilerMarksProvisioningTimeout(t *testing.T) {
+	ctx := context.Background()
+	client := fakeClient()
+	repository := NewRepository(client, testNamespace)
+	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler.provisionTimeout = time.Millisecond
+	agent, _, _ := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
+	time.Sleep(2 * time.Millisecond)
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	agent, _ = repository.Get(ctx, "owner", agent.ID)
+	if agent.Status.State != lifecycle.StateFailed || agent.Status.Reason != "provisioning_timeout" {
+		t.Fatalf("timed out agent = %#v", agent.Status)
+	}
+}
+
+func markClaimReady(t *testing.T, ctx context.Context, client dynamic.Interface, claim *unstructured.Unstructured, sandboxName string) {
+	t.Helper()
+	_ = unstructured.SetNestedField(claim.Object, sandboxName, "status", "sandbox", "name")
+	_ = unstructured.SetNestedSlice(claim.Object, []any{map[string]any{"type": "Ready", "status": "True", "reason": "Ready"}}, "status", "conditions")
+	if _, err := client.Resource(SandboxClaimGVR).Namespace(testNamespace).UpdateStatus(ctx, claim, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createReadySandbox(t *testing.T, ctx context.Context, client dynamic.Interface, agentID, name string) {
+	t.Helper()
+	sandbox := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox",
+		"metadata": map[string]any{"name": name, "namespace": testNamespace, "labels": map[string]any{ManagedLabel: "true", AgentIDLabel: agentID}},
+		"spec":     map[string]any{"replicas": int64(1)},
+		"status":   map[string]any{"replicas": int64(1), "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
+	}}
+	if _, err := client.Resource(SandboxGVR).Namespace(testNamespace).Create(ctx, sandbox, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatal(err)
+	}
+	pod := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]any{"name": name, "namespace": testNamespace, "labels": map[string]any{ManagedLabel: "true", AgentIDLabel: agentID}},
+		"status":   map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}},
+	}}
+	if _, err := client.Resource(PodGVR).Namespace(testNamespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+		t.Fatal(err)
+	}
+}
