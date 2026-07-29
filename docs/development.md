@@ -13,12 +13,15 @@ api/                    REST and terminal protocol source contracts
 cmd/control-plane/      Client-neutral lifecycle API entry point
 cmd/runner/             In-sandbox agent process entry point
 cmd/herdr-bridge/       Herdr integration entry point
+build/agent-sandbox-router/ Pinned upstream router image build
+deploy/agent-sandbox/   Kustomize, Flux, policy, and smoke resources
 internal/api/           Transport-neutral API types
 internal/auth/          Authentication and authorization boundary
 internal/kubernetes/    Kubernetes and Agent Sandbox adapter boundary
 internal/lifecycle/     Agent state transition boundary
 internal/terminal/      Reconnectable terminal protocol boundary
 docs/adr/               Architecture decision records
+docs/platform/          Cluster installation and validation records
 scripts/                Repository validation scripts
 ```
 
@@ -36,6 +39,8 @@ make contracts       # OpenAPI and terminal schema validation
 make build           # host binaries in dist/
 make build-linux     # amd64 and arm64 Linux binaries in dist/
 make container-build # all three local runtime images
+make platform        # render and validate Agent Sandbox manifests
+make agent-sandbox-router-container # build the pinned upstream router
 ```
 
 Each command scaffold can report its build metadata without contacting any
@@ -63,3 +68,7 @@ from the `CI` workflow.
 generators, and fails only if generation changes that snapshot. There are no
 checked-in generated Go files yet; this guard is in place for future API and
 Kubernetes code generation.
+
+The [Agent Sandbox platform guide](platform/agent-sandbox.md) documents the
+pinned controller, router build, Kubernetes installation, smoke test, Flux
+example, and guarded removal path.

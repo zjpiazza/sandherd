@@ -1,0 +1,34 @@
+# Cilium evaluates traffic to the Kubernetes Service after translating it to
+# Talos host-network API endpoints. The portable NetworkPolicy in the base
+# cannot select those endpoints by namespace, so the homelab grants only the
+# controller and router Cilium's well-known kube-apiserver entity.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: agent-sandbox-controller-api
+  namespace: agent-sandbox-system
+  labels:
+    app.kubernetes.io/part-of: sandherd
+spec:
+  endpointSelector:
+    matchLabels:
+      app: agent-sandbox-controller
+  egress:
+    - toEntities:
+        - kube-apiserver
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: sandbox-router-api
+  namespace: agent-sandbox-system
+  labels:
+    app.kubernetes.io/part-of: sandherd
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandbox-router
+      app.kubernetes.io/component: router
+  egress:
+    - toEntities:
+        - kube-apiserver
