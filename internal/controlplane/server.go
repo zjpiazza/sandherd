@@ -1,0 +1,375 @@
+package controlplane
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/zjpiazza/sandherd/internal/kubernetes"
+	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	"k8s.io/apimachinery/pkg/api/resource"
+)
+
+type Enqueuer interface {
+	Enqueue(string)
+}
+
+type Server struct {
+	repository *kubernetes.Repository
+	controller Enqueuer
+	events     *lifecycle.EventBus
+	logger     *slog.Logger
+	token      []byte
+	owner      string
+	ready      func() bool
+}
+
+func NewServer(repository *kubernetes.Repository, controller Enqueuer, events *lifecycle.EventBus, logger *slog.Logger, token []byte, owner string, ready func() bool) *Server {
+	return &Server{repository: repository, controller: controller, events: events, logger: logger, token: token, owner: owner, ready: ready}
+}
+
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(response http.ResponseWriter, _ *http.Request) {
+		writeJSON(response, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("GET /readyz", s.handleReady)
+	mux.HandleFunc("/v1alpha1/agents", s.authenticate(s.handleAgents))
+	mux.HandleFunc("/v1alpha1/agents/", s.authenticate(s.handleAgent))
+	mux.HandleFunc("GET /v1alpha1/events", s.authenticate(s.handleEvents))
+	return mux
+}
+
+type authenticatedHandler func(http.ResponseWriter, *http.Request, string, string)
+
+func (s *Server) authenticate(next authenticatedHandler) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		requestID := request.Header.Get("X-Request-ID")
+		if requestID == "" || len(requestID) > 128 {
+			requestID = lifecycle.NewID()
+		}
+		response.Header().Set("X-Request-ID", requestID)
+		value := request.Header.Get("Authorization")
+		provided := strings.TrimPrefix(value, "Bearer ")
+		if !strings.HasPrefix(value, "Bearer ") || len(provided) != len(s.token) || subtle.ConstantTimeCompare([]byte(provided), s.token) != 1 {
+			writeError(response, requestID, lifecycle.NewError(http.StatusUnauthorized, "unauthenticated", "a valid bearer token is required"))
+			return
+		}
+		next(response, request, s.owner, requestID)
+	}
+}
+
+func (s *Server) handleReady(response http.ResponseWriter, _ *http.Request) {
+	if s.ready != nil && !s.ready() {
+		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (s *Server) handleAgents(response http.ResponseWriter, request *http.Request, owner, requestID string) {
+	switch request.Method {
+	case http.MethodPost:
+		s.createAgent(response, request, owner, requestID)
+	case http.MethodGet:
+		s.listAgents(response, request, owner, requestID)
+	default:
+		response.Header().Set("Allow", "GET, POST")
+		writeError(response, requestID, lifecycle.NewError(http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed"))
+	}
+}
+
+func (s *Server) createAgent(response http.ResponseWriter, request *http.Request, owner, requestID string) {
+	key := request.Header.Get("Idempotency-Key")
+	if key == "" || len(key) > 256 {
+		writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_idempotency_key", "Idempotency-Key is required and must not exceed 256 characters"))
+		return
+	}
+	var create lifecycle.CreateRequest
+	if err := decodeJSON(response, request, &create); err != nil {
+		writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_request", err.Error()))
+		return
+	}
+	create.ApplyDefaults()
+	if err := create.Validate(); err != nil {
+		writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", err.Error()))
+		return
+	}
+	for field, quantity := range map[string]string{"cpu": create.Spec.Resources.CPU, "memory": create.Spec.Resources.Memory, "workspace.size": create.Spec.Workspace.Size} {
+		parsed, err := resource.ParseQuantity(quantity)
+		if err != nil || parsed.Sign() <= 0 {
+			writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", field+" is not a valid Kubernetes quantity"))
+			return
+		}
+	}
+	agent, created, err := s.repository.Create(request.Context(), owner, key, create)
+	if err != nil {
+		writeAnyError(response, requestID, err)
+		return
+	}
+	setAgentHeaders(response, agent)
+	response.Header().Set("Location", "/v1alpha1/agents/"+url.PathEscape(agent.ID))
+	status := http.StatusCreated
+	if created {
+		s.events.Publish(lifecycle.Event{Type: "agent.created", AgentID: agent.ID, State: agent.Status.State, OccurredAt: time.Now().UTC(), RequestID: requestID, Owner: owner})
+		s.logger.Info("agent created", "agent_id", agent.ID, "owner", owner, "request_id", requestID)
+	}
+	s.controller.Enqueue(agent.ID)
+	writeJSON(response, status, agent)
+}
+
+func (s *Server) listAgents(response http.ResponseWriter, request *http.Request, owner, requestID string) {
+	limit := 50
+	if raw := request.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 200 {
+			writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_limit", "limit must be between 1 and 200"))
+			return
+		}
+		limit = parsed
+	}
+	state := lifecycle.State(request.URL.Query().Get("state"))
+	if state != "" && !validState(state) {
+		writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_state", "state filter is invalid"))
+		return
+	}
+	name := request.URL.Query().Get("name")
+	if name != "" && !lifecycle.ValidName(name) {
+		writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_name", "name filter is invalid"))
+		return
+	}
+	result, err := s.repository.List(request.Context(), owner, kubernetes.ListOptions{
+		Limit: limit, Cursor: request.URL.Query().Get("cursor"), State: state, Name: name,
+	})
+	if err != nil {
+		writeAnyError(response, requestID, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, result)
+}
+
+func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request, owner, requestID string) {
+	tail := strings.TrimPrefix(request.URL.Path, "/v1alpha1/agents/")
+	operation := ""
+	if strings.HasSuffix(tail, ":stop") {
+		tail, operation = strings.TrimSuffix(tail, ":stop"), "stop"
+	} else if strings.HasSuffix(tail, ":resume") {
+		tail, operation = strings.TrimSuffix(tail, ":resume"), "resume"
+	}
+	if strings.Contains(tail, "/") || !looksLikeUUID(tail) {
+		writeError(response, requestID, lifecycle.NewError(http.StatusNotFound, "agent_not_found", "agent was not found"))
+		return
+	}
+	if operation != "" {
+		if request.Method != http.MethodPost {
+			writeError(response, requestID, lifecycle.NewError(http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed"))
+			return
+		}
+		s.mutateAgent(response, request, owner, requestID, tail, operation)
+		return
+	}
+	switch request.Method {
+	case http.MethodGet:
+		agent, err := s.repository.Get(request.Context(), owner, tail)
+		if err != nil {
+			writeAnyError(response, requestID, err)
+			return
+		}
+		setAgentHeaders(response, agent)
+		writeJSON(response, http.StatusOK, agent)
+	case http.MethodDelete:
+		s.mutateAgent(response, request, owner, requestID, tail, "delete")
+	default:
+		writeError(response, requestID, lifecycle.NewError(http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed"))
+	}
+}
+
+func (s *Server) mutateAgent(response http.ResponseWriter, request *http.Request, owner, requestID, id, operation string) {
+	agent, err := s.repository.Get(request.Context(), owner, id)
+	if err != nil {
+		writeAnyError(response, requestID, err)
+		return
+	}
+	if ifMatch := request.Header.Get("If-Match"); ifMatch != "" && ifMatch != kubernetes.ETag(agent.ResourceVersion) {
+		writeError(response, requestID, lifecycle.NewError(http.StatusPreconditionFailed, "precondition_failed", "the agent changed since it was read"))
+		return
+	}
+	var desired lifecycle.DesiredState
+	var transitional lifecycle.State
+	switch operation {
+	case "stop":
+		if !lifecycle.CanStop(agent.Status.State) {
+			writeError(response, requestID, lifecycle.NewError(http.StatusConflict, "invalid_state_transition", "the agent cannot be stopped from its current state"))
+			return
+		}
+		if agent.Status.State == lifecycle.StateStopping || agent.Status.State == lifecycle.StateStopped {
+			setAgentHeaders(response, agent)
+			writeJSON(response, http.StatusAccepted, agent)
+			return
+		}
+		desired, transitional = lifecycle.DesiredStopped, lifecycle.StateStopping
+	case "resume":
+		if !lifecycle.CanResume(agent.Status.State) {
+			writeError(response, requestID, lifecycle.NewError(http.StatusConflict, "invalid_state_transition", "the agent cannot be resumed from its current state"))
+			return
+		}
+		if agent.Status.State != lifecycle.StateStopped {
+			setAgentHeaders(response, agent)
+			writeJSON(response, http.StatusAccepted, agent)
+			return
+		}
+		desired, transitional = lifecycle.DesiredRunning, lifecycle.StateProvisioning
+	case "delete":
+		if agent.Status.State == lifecycle.StateDeleting {
+			setAgentHeaders(response, agent)
+			writeJSON(response, http.StatusAccepted, agent)
+			return
+		}
+		desired, transitional = lifecycle.DesiredDeleted, lifecycle.StateDeleting
+	}
+	previous := agent.Status.State
+	agent, err = s.repository.SetDesired(request.Context(), owner, id, request.Header.Get("If-Match"), desired, transitional)
+	if err != nil {
+		writeAnyError(response, requestID, err)
+		return
+	}
+	s.events.Publish(lifecycle.Event{Type: "agent.state_changed", AgentID: id, PreviousState: previous, State: transitional, OccurredAt: time.Now().UTC(), RequestID: requestID, Owner: owner})
+	s.logger.Info("agent lifecycle requested", "agent_id", id, "operation", operation, "state", transitional, "request_id", requestID)
+	s.controller.Enqueue(id)
+	setAgentHeaders(response, agent)
+	writeJSON(response, http.StatusAccepted, agent)
+}
+
+func (s *Server) handleEvents(response http.ResponseWriter, request *http.Request, owner, requestID string) {
+	filterAgent := request.URL.Query().Get("agentId")
+	if filterAgent != "" {
+		if !looksLikeUUID(filterAgent) {
+			writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_agent_id", "agentId filter is invalid"))
+			return
+		}
+		if _, err := s.repository.Get(request.Context(), owner, filterAgent); err != nil {
+			writeAnyError(response, requestID, err)
+			return
+		}
+	}
+	replay, events, valid, cancel := s.events.Subscribe(owner, request.Header.Get("Last-Event-ID"))
+	if !valid {
+		writeError(response, requestID, lifecycle.NewError(http.StatusGone, "event_cursor_expired", "the event cursor is no longer available"))
+		return
+	}
+	defer cancel()
+	flusher, ok := response.(http.Flusher)
+	if !ok {
+		writeError(response, requestID, lifecycle.NewError(http.StatusInternalServerError, "internal_error", "streaming is unavailable"))
+		return
+	}
+	response.Header().Set("Content-Type", "text/event-stream")
+	response.Header().Set("Cache-Control", "no-cache")
+	response.Header().Set("Connection", "keep-alive")
+	response.WriteHeader(http.StatusOK)
+	for _, event := range replay {
+		if filterAgent == "" || event.AgentID == filterAgent {
+			writeSSE(response, event)
+		}
+	}
+	flusher.Flush()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case event, open := <-events:
+			if !open {
+				return
+			}
+			if event.Owner == owner && (filterAgent == "" || event.AgentID == filterAgent) {
+				writeSSE(response, event)
+				flusher.Flush()
+			}
+		case <-heartbeat.C:
+			_, _ = io.WriteString(response, ": keepalive\n\n")
+			flusher.Flush()
+		case <-request.Context().Done():
+			return
+		}
+	}
+}
+
+func writeSSE(response io.Writer, event lifecycle.Event) {
+	payload, _ := json.Marshal(event)
+	_, _ = fmt.Fprintf(response, "id: %s\nevent: %s\ndata: %s\n\n", event.ID, event.Type, payload)
+}
+
+func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
+	request.Body = http.MaxBytesReader(response, request.Body, 1024*1024)
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("request body is invalid: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("request body must contain one JSON value")
+	}
+	return nil
+}
+
+func setAgentHeaders(response http.ResponseWriter, agent lifecycle.Agent) {
+	response.Header().Set("ETag", kubernetes.ETag(agent.ResourceVersion))
+}
+
+func writeAnyError(response http.ResponseWriter, requestID string, err error) {
+	var typed *lifecycle.Error
+	if errors.As(err, &typed) {
+		writeError(response, requestID, typed)
+		return
+	}
+	writeError(response, requestID, lifecycle.NewError(http.StatusInternalServerError, "internal_error", "an internal error occurred"))
+}
+
+func writeError(response http.ResponseWriter, requestID string, err *lifecycle.Error) {
+	writeJSON(response, err.Status, map[string]any{"error": map[string]any{
+		"code": err.Code, "message": err.Message, "requestId": requestID, "retryable": err.Retryable, "details": err.Details,
+	}})
+}
+
+func writeJSON(response http.ResponseWriter, status int, value any) {
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(value)
+}
+
+func looksLikeUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if character != '-' {
+				return false
+			}
+			continue
+		}
+		if !strings.ContainsRune("0123456789abcdefABCDEF", character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validState(state lifecycle.State) bool {
+	switch state {
+	case lifecycle.StateRequested, lifecycle.StateProvisioning, lifecycle.StateStarting, lifecycle.StateRunning,
+		lifecycle.StateStopping, lifecycle.StateStopped, lifecycle.StateFailed, lifecycle.StateDeleting:
+		return true
+	default:
+		return false
+	}
+}

@@ -4,9 +4,9 @@ package main
 import (
 	"os"
 
-	"github.com/zjpiazza/sandherd/internal/cliapp"
+	"github.com/zjpiazza/sandherd/internal/controlplane"
 )
 
 func main() {
-	os.Exit(cliapp.Run("control-plane", os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(controlplane.Run(os.Args[1:], os.Stdout, os.Stderr))
 }

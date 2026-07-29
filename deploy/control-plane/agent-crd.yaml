@@ -1,0 +1,135 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agents.sandherd.dev
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+spec:
+  group: sandherd.dev
+  scope: Namespaced
+  names:
+    plural: agents
+    singular: agent
+    kind: Agent
+    shortNames:
+      - shagent
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Public Name
+          type: string
+          jsonPath: .spec.name
+        - name: Desired
+          type: string
+          jsonPath: .spec.desiredState
+        - name: State
+          type: string
+          jsonPath: .status.state
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [id, name, owner, desiredState, agent]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: '^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$'
+                owner:
+                  type: string
+                  minLength: 1
+                desiredState:
+                  type: string
+                  enum: [running, stopped, deleted]
+                agent:
+                  type: object
+                  required: [kind, sandboxProfile, resources, workspace, lifecycle]
+                  properties:
+                    kind:
+                      type: string
+                    sandboxProfile:
+                      type: string
+                    repository:
+                      type: object
+                      required: [url]
+                      properties:
+                        url:
+                          type: string
+                        revision:
+                          type: string
+                    resources:
+                      type: object
+                      required: [cpu, memory]
+                      properties:
+                        cpu:
+                          type: string
+                        memory:
+                          type: string
+                    workspace:
+                      type: object
+                      required: [size, retentionPolicy]
+                      properties:
+                        size:
+                          type: string
+                        storageProfile:
+                          type: string
+                        retentionPolicy:
+                          type: string
+                          enum: [delete, retain]
+                    secretProfile:
+                      type: string
+                    lifecycle:
+                      type: object
+                      required: [idleTimeoutSeconds]
+                      properties:
+                        idleTimeoutSeconds:
+                          type: integer
+                          format: int64
+                          minimum: 0
+                          maximum: 604800
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [requested, provisioning, starting, running, stopping, stopped, failed, deleting]
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                reason:
+                  type: string
+                  pattern: '^[a-z][a-z0-9_]*$'
+                message:
+                  type: string
+                  maxLength: 1024
+                readyAt:
+                  type: string
+                  format: date-time
+                stoppedAt:
+                  type: string
+                  format: date-time
+                lastTransitionAt:
+                  type: string
+                  format: date-time

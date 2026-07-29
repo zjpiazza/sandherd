@@ -1,0 +1,44 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sandherd-control-plane
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+rules:
+  - apiGroups: [sandherd.dev]
+    resources: [agents]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [sandherd.dev]
+    resources: [agents/status]
+    verbs: [get, update, patch]
+  - apiGroups: [extensions.agents.x-k8s.io]
+    resources: [sandboxclaims]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [agents.x-k8s.io]
+    resources: [sandboxes]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sandherd-control-plane
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sandherd-control-plane
+subjects:
+  - kind: ServiceAccount
+    name: sandherd-control-plane
+    namespace: sandherd-system

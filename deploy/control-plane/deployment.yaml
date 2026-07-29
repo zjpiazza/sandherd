@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandherd-control-plane
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sandherd-control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandherd-control-plane
+        app.kubernetes.io/part-of: sandherd
+    spec:
+      serviceAccountName: sandherd-control-plane
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: control-plane
+          image: sandherd/control-plane:dev
+          args:
+            - --listen=:8080
+            - --namespace=sandherd-system
+            - --owner-id=homelab
+            - --auth-token-file=/var/run/secrets/sandherd/api-token
+            - --sandbox-profile=standard=sandherd-standard
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: api-token
+              mountPath: /var/run/secrets/sandherd
+              readOnly: true
+      volumes:
+        - name: api-token
+          secret:
+            secretName: sandherd-api-token
+            items:
+              - key: token
+                path: api-token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandherd-control-plane
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+spec:
+  selector:
+    app.kubernetes.io/name: sandherd-control-plane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

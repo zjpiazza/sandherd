@@ -44,5 +44,23 @@ fi
 kustomize "$repo_root/deploy/agent-sandbox/smoke/base" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/smoke/overlays/homelab" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/flux" >/dev/null
+kustomize "$repo_root/deploy/control-plane" >"$rendered"
+kustomize "$repo_root/deploy/control-plane-homelab" >/dev/null
+
+for required in \
+  'name: agents.sandherd.dev' \
+  'name: sandherd-control-plane' \
+  'resources:' \
+  'sandboxclaims'; do
+  if ! grep -q -- "$required" "$rendered"; then
+    printf 'rendered control plane is missing: %s\n' "$required" >&2
+    exit 1
+  fi
+done
+
+if grep -A80 'kind: Role' "$rendered" | grep -Eq 'resources: \[(deployments|statefulsets|daemonsets|jobs|pods)\].*create'; then
+  printf '%s\n' 'control-plane Role can create arbitrary workloads' >&2
+  exit 1
+fi
 
 printf '%s\n' 'Agent Sandbox platform manifests are valid.'
