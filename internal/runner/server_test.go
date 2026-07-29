@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 )
 
 const (
@@ -36,6 +39,64 @@ func newTestServer(t *testing.T) (*hub, *httptest.Server) {
 	httpServer := httptest.NewServer(api.handler())
 	t.Cleanup(httpServer.Close)
 	return h, httpServer
+}
+
+func TestRunnerAcceptsScopedGatewayCapability(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, _ := internalauth.NewSigner(privateKey, time.Minute)
+	verifier, _ := internalauth.NewVerifier(publicKey)
+	h, _ := testHub(t, 1024, 16, time.Minute)
+	api := &server{
+		hub: h, authenticator: capabilityAuthenticator{verifier: verifier, agentID: h.agentID},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)), attachTimeout: time.Second, writeTimeout: time.Second,
+	}
+	httpServer := httptest.NewServer(api.handler())
+	defer httpServer.Close()
+	token, err := signer.Mint(h.agentID, "observe", "capability-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	connection, response, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v1alpha1/terminal", &websocket.DialOptions{
+		HTTPHeader: http.Header{internalauth.CapabilityHeader: []string{token}}, Subprotocols: []string{Protocol},
+	})
+	if err != nil {
+		if response != nil {
+			t.Fatalf("dial status %d: %v", response.StatusCode, err)
+		}
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	if err := wsjson.Write(ctx, connection, terminalAttach("control", nil)); err != nil {
+		t.Fatal(err)
+	}
+	var frame Frame
+	if err := wsjson.Read(ctx, connection, &frame); err != nil {
+		t.Fatal(err)
+	}
+	if frame.Type != "error" || frame.Code != "forbidden_role" || frame.RequestID != "capability-request" {
+		t.Fatalf("capability response = %#v", frame)
+	}
+	controlToken, err := signer.Mint(h.agentID, "control", "capability-control-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for method, endpoint := range map[string]string{http.MethodGet: "metadata", http.MethodPost: "stop"} {
+		request, _ := http.NewRequest(method, httpServer.URL+"/v1alpha1/"+endpoint, nil)
+		request.Header.Set(internalauth.CapabilityHeader, controlToken)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s with terminal capability status = %d, want 403", endpoint, response.StatusCode)
+		}
+	}
 }
 
 func dialTerminal(t *testing.T, httpServer *httptest.Server, token string, attach Frame) *websocket.Conn {

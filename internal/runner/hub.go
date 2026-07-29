@@ -7,8 +7,10 @@ import (
 )
 
 type Permissions struct {
-	Observe bool
-	Control bool
+	Observe      bool
+	Control      bool
+	TerminalOnly bool
+	RequestID    string
 }
 
 type attachRequest struct {

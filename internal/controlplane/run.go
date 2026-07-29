@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"crypto/subtle"
 	"flag"
 	"fmt"
 	"io"
@@ -16,7 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 	"github.com/zjpiazza/sandherd/internal/buildinfo"
+	"github.com/zjpiazza/sandherd/internal/gateway"
 	cluster "github.com/zjpiazza/sandherd/internal/kubernetes"
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
 	"k8s.io/client-go/dynamic"
@@ -44,13 +47,18 @@ func (p profileMap) Set(value string) error {
 }
 
 type runConfig struct {
-	listen     string
-	namespace  string
-	kubeconfig string
-	context    string
-	tokenFile  string
-	owner      string
-	profiles   profileMap
+	listen               string
+	namespace            string
+	kubeconfig           string
+	context              string
+	tokenFile            string
+	observeTokenFile     string
+	capabilityPrivateKey string
+	routerURL            string
+	routerTokenFile      string
+	runnerPort           int
+	owner                string
+	profiles             profileMap
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -79,6 +87,11 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 	flags.StringVar(&configuration.kubeconfig, "kubeconfig", "", "kubeconfig path (defaults to in-cluster or standard loading rules)")
 	flags.StringVar(&configuration.context, "context", "", "kubeconfig context override")
 	flags.StringVar(&configuration.tokenFile, "auth-token-file", "/var/run/secrets/sandherd/api-token", "file containing the API bearer token")
+	flags.StringVar(&configuration.observeTokenFile, "observe-token-file", "", "optional file containing an observe-only API bearer token")
+	flags.StringVar(&configuration.capabilityPrivateKey, "capability-private-key-file", "/var/run/secrets/sandherd/capability-private-key.pem", "Ed25519 key used to sign short-lived runner capabilities")
+	flags.StringVar(&configuration.routerURL, "sandbox-router-url", "http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080", "Agent Sandbox router URL")
+	flags.StringVar(&configuration.routerTokenFile, "sandbox-router-token-file", "/var/run/secrets/kubernetes.io/serviceaccount/token", "Kubernetes bearer token used with the sandbox router")
+	flags.IntVar(&configuration.runnerPort, "runner-port", 8080, "runner port inside each sandbox")
 	flags.StringVar(&configuration.owner, "owner-id", "", "stable owner ID represented by the static credential")
 	flags.Var(configuration.profiles, "sandbox-profile", "approved public-profile=warm-pool mapping (repeatable)")
 	flags.Usage = func() {
@@ -99,8 +112,8 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 		fmt.Fprintln(stderr, "control-plane: --owner-id is required and must not exceed 256 characters")
 		return runConfig{}, false, fmt.Errorf("invalid owner ID")
 	}
-	if configuration.namespace == "" || len(configuration.profiles) == 0 {
-		return runConfig{}, false, fmt.Errorf("namespace and at least one sandbox profile are required")
+	if configuration.namespace == "" || len(configuration.profiles) == 0 || configuration.capabilityPrivateKey == "" || configuration.routerURL == "" || configuration.routerTokenFile == "" || configuration.runnerPort < 1 || configuration.runnerPort > 65535 {
+		return runConfig{}, false, fmt.Errorf("namespace, gateway routing, and at least one sandbox profile are required")
 	}
 	return configuration, false, nil
 }
@@ -109,6 +122,28 @@ func execute(configuration runConfig, stderr io.Writer) error {
 	token, err := readToken(configuration.tokenFile)
 	if err != nil {
 		return fmt.Errorf("read API token: %w", err)
+	}
+	var observeToken []byte
+	if configuration.observeTokenFile != "" {
+		observeToken, err = readToken(configuration.observeTokenFile)
+		if err != nil {
+			return fmt.Errorf("read observe API token: %w", err)
+		}
+		if subtle.ConstantTimeCompare(token, observeToken) == 1 {
+			return fmt.Errorf("control and observe API tokens must differ")
+		}
+	}
+	privateKeyContents, err := os.ReadFile(filepath.Clean(configuration.capabilityPrivateKey))
+	if err != nil {
+		return fmt.Errorf("read capability private key: %w", err)
+	}
+	privateKey, err := internalauth.ParsePrivateKeyPEM(privateKeyContents)
+	if err != nil {
+		return fmt.Errorf("parse capability private key: %w", err)
+	}
+	capabilitySigner, err := internalauth.NewSigner(privateKey, 30*time.Second)
+	if err != nil {
+		return err
 	}
 	restConfig, err := loadKubeConfig(configuration)
 	if err != nil {
@@ -129,6 +164,14 @@ func execute(configuration runConfig, stderr io.Writer) error {
 	logger := slog.New(slog.NewJSONHandler(stderr, nil)).With("component", "control-plane", "namespace", configuration.namespace)
 	repository := cluster.NewRepository(client, configuration.namespace)
 	events := lifecycle.NewEventBus(2048)
+	terminalGateway, err := gateway.New(gateway.Config{
+		Resolver: repository, Signer: capabilitySigner, Events: events, Logger: logger,
+		RouterURL: configuration.routerURL, RouterTokenFile: configuration.routerTokenFile,
+		RunnerPort: configuration.runnerPort, Limits: gateway.DefaultLimits(),
+	})
+	if err != nil {
+		return fmt.Errorf("configure terminal gateway: %w", err)
+	}
 	reconciler := cluster.NewReconciler(client, repository, configuration.namespace, configuration.profiles, events, logger)
 	controller := cluster.NewController(client, repository, reconciler, configuration.namespace, logger)
 	var ready atomic.Bool
@@ -136,7 +179,7 @@ func execute(configuration runConfig, stderr io.Writer) error {
 		return fmt.Errorf("verify Agent API access: %w", err)
 	}
 	ready.Store(true)
-	api := NewServer(repository, controller, events, logger, token, configuration.owner, ready.Load)
+	api := NewServer(repository, controller, events, logger, token, observeToken, configuration.owner, ready.Load, terminalGateway)
 	httpServer := &http.Server{
 		Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),

@@ -33,6 +33,10 @@ spec:
             - --namespace=sandherd-system
             - --owner-id=homelab
             - --auth-token-file=/var/run/secrets/sandherd/api-token
+            - --capability-private-key-file=/var/run/secrets/sandherd/capability-private-key.pem
+            - --sandbox-router-url=http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080
+            - --sandbox-router-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+            - --runner-port=8080
             - --sandbox-profile=standard=sandherd-standard
           ports:
             - name: http
@@ -58,16 +62,23 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
-            - name: api-token
+            - name: credentials
               mountPath: /var/run/secrets/sandherd
               readOnly: true
       volumes:
-        - name: api-token
-          secret:
-            secretName: sandherd-api-token
-            items:
-              - key: token
-                path: api-token
+        - name: credentials
+          projected:
+            sources:
+              - secret:
+                  name: sandherd-api-token
+                  items:
+                    - key: token
+                      path: api-token
+              - secret:
+                  name: sandherd-runner-capability-signing-key
+                  items:
+                    - key: private-key.pem
+                      path: capability-private-key.pem
 ---
 apiVersion: v1
 kind: Service

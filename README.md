@@ -168,7 +168,7 @@ The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` comman
 - [ ] Define the Sandherd agent and attachment APIs
 - [ ] Build the reconnectable sandbox runner
 - [ ] Create, inspect, stop, resume, and delete agents through the control plane
-- [ ] Stream an interactive terminal over WebSocket
+- [x] Stream an interactive terminal over WebSocket
 - [ ] Ship the first Herdr integration
 - [ ] Add PVC-backed agent workspaces
 - [ ] Add scoped secrets and default-deny network policies

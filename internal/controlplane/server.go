@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -22,18 +23,27 @@ type Enqueuer interface {
 	Enqueue(string)
 }
 
-type Server struct {
-	repository *kubernetes.Repository
-	controller Enqueuer
-	events     *lifecycle.EventBus
-	logger     *slog.Logger
-	token      []byte
-	owner      string
-	ready      func() bool
+type TerminalGateway interface {
+	ServeTerminal(http.ResponseWriter, *http.Request, string, string, string, bool) error
+	Metrics(http.ResponseWriter, *http.Request)
 }
 
-func NewServer(repository *kubernetes.Repository, controller Enqueuer, events *lifecycle.EventBus, logger *slog.Logger, token []byte, owner string, ready func() bool) *Server {
-	return &Server{repository: repository, controller: controller, events: events, logger: logger, token: token, owner: owner, ready: ready}
+type permissionContextKey struct{}
+
+type Server struct {
+	repository   *kubernetes.Repository
+	controller   Enqueuer
+	events       *lifecycle.EventBus
+	logger       *slog.Logger
+	token        []byte
+	observeToken []byte
+	owner        string
+	ready        func() bool
+	terminal     TerminalGateway
+}
+
+func NewServer(repository *kubernetes.Repository, controller Enqueuer, events *lifecycle.EventBus, logger *slog.Logger, token, observeToken []byte, owner string, ready func() bool, terminal TerminalGateway) *Server {
+	return &Server{repository: repository, controller: controller, events: events, logger: logger, token: token, observeToken: observeToken, owner: owner, ready: ready, terminal: terminal}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -42,6 +52,9 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(response, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /readyz", s.handleReady)
+	if s.terminal != nil {
+		mux.HandleFunc("GET /metrics", s.terminal.Metrics)
+	}
 	mux.HandleFunc("/v1alpha1/agents", s.authenticate(s.handleAgents))
 	mux.HandleFunc("/v1alpha1/agents/", s.authenticate(s.handleAgent))
 	mux.HandleFunc("GET /v1alpha1/events", s.authenticate(s.handleEvents))
@@ -59,10 +72,13 @@ func (s *Server) authenticate(next authenticatedHandler) http.HandlerFunc {
 		response.Header().Set("X-Request-ID", requestID)
 		value := request.Header.Get("Authorization")
 		provided := strings.TrimPrefix(value, "Bearer ")
-		if !strings.HasPrefix(value, "Bearer ") || len(provided) != len(s.token) || subtle.ConstantTimeCompare([]byte(provided), s.token) != 1 {
+		isControl := strings.HasPrefix(value, "Bearer ") && len(provided) == len(s.token) && subtle.ConstantTimeCompare([]byte(provided), s.token) == 1
+		isObserver := strings.HasPrefix(value, "Bearer ") && len(s.observeToken) > 0 && len(provided) == len(s.observeToken) && subtle.ConstantTimeCompare([]byte(provided), s.observeToken) == 1
+		if !isControl && !isObserver {
 			writeError(response, requestID, lifecycle.NewError(http.StatusUnauthorized, "unauthenticated", "a valid bearer token is required"))
 			return
 		}
+		request = request.WithContext(context.WithValue(request.Context(), permissionContextKey{}, isControl))
 		next(response, request, s.owner, requestID)
 	}
 }
@@ -88,6 +104,10 @@ func (s *Server) handleAgents(response http.ResponseWriter, request *http.Reques
 }
 
 func (s *Server) createAgent(response http.ResponseWriter, request *http.Request, owner, requestID string) {
+	if !hasControlPermission(request) {
+		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_role", "control permission is required"))
+		return
+	}
 	key := request.Header.Get("Idempotency-Key")
 	if key == "" || len(key) > 256 {
 		writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_idempotency_key", "Idempotency-Key is required and must not exceed 256 characters"))
@@ -159,13 +179,30 @@ func (s *Server) listAgents(response http.ResponseWriter, request *http.Request,
 func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request, owner, requestID string) {
 	tail := strings.TrimPrefix(request.URL.Path, "/v1alpha1/agents/")
 	operation := ""
-	if strings.HasSuffix(tail, ":stop") {
+	terminal := false
+	if strings.HasSuffix(tail, "/terminal") {
+		tail, terminal = strings.TrimSuffix(tail, "/terminal"), true
+	} else if strings.HasSuffix(tail, ":stop") {
 		tail, operation = strings.TrimSuffix(tail, ":stop"), "stop"
 	} else if strings.HasSuffix(tail, ":resume") {
 		tail, operation = strings.TrimSuffix(tail, ":resume"), "resume"
 	}
 	if strings.Contains(tail, "/") || !looksLikeUUID(tail) {
 		writeError(response, requestID, lifecycle.NewError(http.StatusNotFound, "agent_not_found", "agent was not found"))
+		return
+	}
+	if terminal {
+		if request.Method != http.MethodGet {
+			writeError(response, requestID, lifecycle.NewError(http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed"))
+			return
+		}
+		if s.terminal == nil {
+			writeError(response, requestID, lifecycle.NewError(http.StatusServiceUnavailable, "gateway_unavailable", "terminal streaming is unavailable"))
+			return
+		}
+		if err := s.terminal.ServeTerminal(response, request, owner, tail, requestID, hasControlPermission(request)); err != nil {
+			writeAnyError(response, requestID, err)
+		}
 		return
 	}
 	if operation != "" {
@@ -193,6 +230,10 @@ func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request
 }
 
 func (s *Server) mutateAgent(response http.ResponseWriter, request *http.Request, owner, requestID, id, operation string) {
+	if !hasControlPermission(request) {
+		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_role", "control permission is required"))
+		return
+	}
 	agent, err := s.repository.Get(request.Context(), owner, id)
 	if err != nil {
 		writeAnyError(response, requestID, err)
@@ -246,6 +287,11 @@ func (s *Server) mutateAgent(response http.ResponseWriter, request *http.Request
 	s.controller.Enqueue(id)
 	setAgentHeaders(response, agent)
 	writeJSON(response, http.StatusAccepted, agent)
+}
+
+func hasControlPermission(request *http.Request) bool {
+	value, _ := request.Context().Value(permissionContextKey{}).(bool)
+	return value
 }
 
 func (s *Server) handleEvents(response http.ResponseWriter, request *http.Request, owner, requestID string) {

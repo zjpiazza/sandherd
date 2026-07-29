@@ -42,6 +42,8 @@ The service implements:
 - `POST /v1alpha1/agents/{id}:stop`
 - `POST /v1alpha1/agents/{id}:resume`
 - `GET /v1alpha1/events` as server-sent events
+- `GET /v1alpha1/agents/{id}/terminal` as a reconnectable WebSocket
+- `GET /metrics` for content-free gateway telemetry
 - `/healthz` and `/readyz`
 
 Create requires `Idempotency-Key`. The owner, key, and canonical request hash
@@ -56,8 +58,9 @@ never expose Kubernetes messages. Lifecycle events are held in a bounded
 in-memory replay buffer for SSE reconnects; terminal bytes are never events.
 
 End-user identity-provider integration remains issue #9. The MVP process uses
-one static bearer token and one stable owner ID, supplied only through a mounted
-file and command flag:
+one control bearer token, an optional observe-only token, and one stable owner
+ID, supplied only through mounted files and command flags. Terminal streams use
+the [gateway security and routing model](terminal-gateway.md):
 
 ```sh
 go run ./cmd/control-plane \
@@ -65,6 +68,8 @@ go run ./cmd/control-plane \
   --namespace sandherd-system \
   --owner-id homelab \
   --auth-token-file /run/sandherd/api-token \
+  --capability-private-key-file /run/sandherd/capability-private-key.pem \
+  --sandbox-router-token-file /var/run/secrets/kubernetes.io/serviceaccount/token \
   --sandbox-profile standard=sandherd-standard
 ```
 
@@ -87,6 +92,8 @@ kubectl --context admin@homelab --namespace sandherd-system \
   create secret generic sandherd-api-token \
   --from-literal=token='replace-with-a-long-random-token'
 
+# Create the signing key Secret described in docs/terminal-gateway.md too.
+
 kubectl --context admin@homelab apply --kustomize deploy/control-plane-homelab
 ```
 
@@ -95,7 +102,8 @@ apply `deploy/control-plane` directly. The homelab overlay grants the Talos API
 endpoint through Cilium's `kube-apiserver` entity after Service translation.
 
 The Pod explicitly mounts its namespace-scoped service-account token because
-the control plane is the sole Sandherd component authorized to call Kubernetes.
+the control plane is the sole Sandherd component authorized to call Kubernetes
+and the authenticated Agent Sandbox router.
 Sandbox service accounts continue to set `automountServiceAccountToken: false`.
 
 ## Restart and failure semantics

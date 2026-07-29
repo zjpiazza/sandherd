@@ -3,9 +3,13 @@ package kubernetes
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -17,6 +21,49 @@ func fakeClient(objects ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		AgentGVR: "AgentList", SandboxClaimGVR: "SandboxClaimList", SandboxGVR: "SandboxList", PodGVR: "PodList", PVCGVR: "PersistentVolumeClaimList",
 	}, objects...)
+}
+
+func TestRepositoryResolveRunnerKeepsKubernetesIdentityInternal(t *testing.T) {
+	ctx := context.Background()
+	repository := NewRepository(fakeClient(), testNamespace)
+	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.ResolveRunner(ctx, "owner", agent.ID); errorCode(err) != "agent_not_running" {
+		t.Fatalf("resolve non-running agent error = %v", err)
+	}
+	status := agent.Status
+	status.State = lifecycle.StateRunning
+	status.ObservedGeneration = agent.Generation
+	now := time.Now().UTC()
+	status.ReadyAt = &now
+	if _, err := repository.SetStatus(ctx, agent.ID, status); err != nil {
+		t.Fatal(err)
+	}
+	claim := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "extensions.agents.x-k8s.io/v1beta1", "kind": "SandboxClaim",
+		"metadata": map[string]any{"name": claimName(agent.ID), "namespace": testNamespace},
+		"status":   map[string]any{"sandbox": map[string]any{"name": "sandbox-internal-1"}},
+	}}
+	if _, err := repository.client.Resource(SandboxClaimGVR).Namespace(testNamespace).Create(ctx, claim, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	target, err := repository.ResolveRunner(ctx, "owner", agent.ID)
+	if err != nil || target.SandboxName != "sandbox-internal-1" || target.AgentID != agent.ID {
+		t.Fatalf("target = %#v, error %v", target, err)
+	}
+	if _, err := repository.ResolveRunner(ctx, "another-owner", agent.ID); errorStatus(err) != http.StatusNotFound {
+		t.Fatalf("cross-owner resolve error = %v", err)
+	}
+}
+
+func errorStatus(err error) int {
+	var typed *lifecycle.Error
+	if errors.As(err, &typed) {
+		return typed.Status
+	}
+	return 0
 }
 
 func validCreateRequest(name string) lifecycle.CreateRequest {
