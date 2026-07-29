@@ -8,6 +8,8 @@
 
 <br />
 <div align="center">
+  <img src="docs/images/sandherd.png" alt="Sandherd: Kubernetes agents running in isolated sandboxes" width="640" />
+
   <h1>Sandherd</h1>
 
   <p align="center">
