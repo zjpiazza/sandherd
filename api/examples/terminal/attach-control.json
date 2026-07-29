@@ -1,0 +1,13 @@
+{
+  "type": "attach",
+  "protocolVersion": "v1alpha1",
+  "role": "control",
+  "afterSequence": 41,
+  "takeover": false,
+  "terminalSize": {
+    "columns": 120,
+    "rows": 40,
+    "pixelWidth": 1200,
+    "pixelHeight": 800
+  }
+}

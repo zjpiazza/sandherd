@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sandherd.dev/schemas/terminal/v1alpha1.json",
+  "title": "Sandherd terminal protocol v1alpha1",
+  "description": "Frames exchanged after negotiating the sandherd.terminal.v1alpha1 WebSocket subprotocol.",
+  "oneOf": [
+    { "$ref": "#/$defs/attach" },
+    { "$ref": "#/$defs/attached" },
+    { "$ref": "#/$defs/input" },
+    { "$ref": "#/$defs/resize" },
+    { "$ref": "#/$defs/ack" },
+    { "$ref": "#/$defs/takeover" },
+    { "$ref": "#/$defs/output" },
+    { "$ref": "#/$defs/replayGap" },
+    { "$ref": "#/$defs/controllerRevoked" },
+    { "$ref": "#/$defs/exit" },
+    { "$ref": "#/$defs/error" },
+    { "$ref": "#/$defs/ping" },
+    { "$ref": "#/$defs/pong" }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "base64": {
+      "type": "string",
+      "contentEncoding": "base64"
+    },
+    "terminalSize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columns", "rows"],
+      "properties": {
+        "columns": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "rows": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "pixelWidth": { "type": "integer", "minimum": 0 },
+        "pixelHeight": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "attach": {
+      "title": "Attach",
+      "description": "The first client frame. It selects a role and optional replay cursor.",
+      "x-direction": "client-to-server",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "protocolVersion", "role", "terminalSize"],
+      "properties": {
+        "type": { "const": "attach" },
+        "protocolVersion": { "const": "v1alpha1" },
+        "role": { "enum": ["control", "observe"] },
+        "afterSequence": { "$ref": "#/$defs/sequence" },
+        "takeover": { "type": "boolean", "default": false },
+        "terminalSize": { "$ref": "#/$defs/terminalSize" }
+      }
+    },
+    "attached": {
+      "title": "Attached",
+      "description": "Confirms the role, runner generation, replay range, and optional control lease.",
+      "x-direction": "server-to-client",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "attachmentId", "agentId", "role", "runnerGeneration", "earliestSequence", "latestSequence"],
+      "properties": {
+        "type": { "const": "attached" },
+        "attachmentId": { "$ref": "#/$defs/uuid" },
+        "agentId": { "$ref": "#/$defs/uuid" },
+        "role": { "enum": ["control", "observe"] },
+        "leaseId": { "$ref": "#/$defs/uuid" },
+        "runnerGeneration": { "$ref": "#/$defs/uuid" },
+        "earliestSequence": { "$ref": "#/$defs/sequence" },
+        "latestSequence": { "$ref": "#/$defs/sequence" },
+        "processState": { "enum": ["starting", "running", "exited"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "role": { "const": "control" } } },
+          "then": { "required": ["leaseId"] },
+          "else": { "not": { "required": ["leaseId"] } }
+        }
+      ]
+    },
+    "input": {
+      "title": "Terminal input",
+      "description": "Sends terminal bytes. Only a controller holding the current lease may send it.",
+      "x-direction": "client-to-server",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "leaseId", "data"],
+      "properties": {
+        "type": { "const": "input" },
+        "leaseId": { "$ref": "#/$defs/uuid" },
+        "data": { "$ref": "#/$defs/base64" }
+      }
+    },
+    "resize": {
+      "title": "Resize",
+      "description": "Changes PTY dimensions. Only a controller holding the current lease may send it.",
+      "x-direction": "client-to-server",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "leaseId", "terminalSize"],
+      "properties": {
+        "type": { "const": "resize" },
+        "leaseId": { "$ref": "#/$defs/uuid" },
+        "terminalSize": { "$ref": "#/$defs/terminalSize" }
+      }
+    },
+    "ack": {
+      "title": "Output acknowledgement",
+      "description": "Reports the highest contiguous output sequence processed by this client.",
+      "x-direction": "client-to-server",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sequence"],
+      "properties": {
+        "type": { "const": "ack" },
+        "sequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "takeover": {
+      "title": "Controller takeover",
+      "description": "Requests the control role. The server atomically revokes any previous controller.",
+      "x-direction": "client-to-server",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "takeover" }
+      }
+    },
+    "output": {
+      "title": "Terminal output",
+      "description": "Carries one ordered chunk of PTY output bytes.",
+      "x-direction": "server-to-client",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sequence", "data"],
+      "properties": {
+        "type": { "const": "output" },
+        "sequence": { "$ref": "#/$defs/sequence" },
+        "data": { "$ref": "#/$defs/base64" }
+      }
+    },
+    "replayGap": {
+      "title": "Replay gap",
+      "description": "The requested cursor predates the bounded replay buffer.",
+      "x-direction": "server-to-client",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "requestedAfterSequence", "earliestSequence", "latestSequence"],
+      "properties": {
+        "type": { "const": "replay_gap" },
+        "requestedAfterSequence": { "$ref": "#/$defs/sequence" },
+        "earliestSequence": { "$ref": "#/$defs/sequence" },
+        "latestSequence": { "$ref": "#/$defs/sequence" }
+      }
+    },
+    "controllerRevoked": {
+      "title": "Controller revoked",
+      "description": "Notifies a controller that another attachment took over the lease.",
+      "x-direction": "server-to-client",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "const": "controller_revoked" },
+        "reason": { "enum": ["takeover", "lease_expired", "agent_stopped"] }
+      }
+    },
+    "exit": {
+      "title": "Process exit",
+      "description": "Reports process completion once per runner generation.",
+      "x-direction": "server-to-client",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "runnerGeneration"],
+      "properties": {
+        "type": { "const": "exit" },
+        "runnerGeneration": { "$ref": "#/$defs/uuid" },
+        "exitCode": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "signal": { "type": "string", "minLength": 1 },
+        "finishedAt": { "type": "string", "format": "date-time" }
+      },
+      "oneOf": [
+        { "required": ["exitCode"], "not": { "required": ["signal"] } },
+        { "required": ["signal"], "not": { "required": ["exitCode"] } }
+      ]
+    },
+    "error": {
+      "title": "Protocol error",
+      "description": "Reports a terminal error using the same stable codes as the REST API.",
+      "x-direction": "server-to-client",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "requestId", "retryable"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "message": { "type": "string", "minLength": 1 },
+        "requestId": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "ping": {
+      "title": "Ping",
+      "x-direction": "either",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "nonce"],
+      "properties": {
+        "type": { "const": "ping" },
+        "nonce": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "pong": {
+      "title": "Pong",
+      "x-direction": "either",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "nonce"],
+      "properties": {
+        "type": { "const": "pong" },
+        "nonce": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    }
+  }
+}

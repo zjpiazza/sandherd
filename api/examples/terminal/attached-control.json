@@ -1,0 +1,11 @@
+{
+  "type": "attached",
+  "attachmentId": "019c1234-1234-7123-8123-123456789abd",
+  "agentId": "019c1234-1234-7123-8123-123456789abc",
+  "role": "control",
+  "leaseId": "019c1234-1234-7123-8123-123456789abe",
+  "runnerGeneration": "019c1234-1234-7123-8123-123456789abf",
+  "earliestSequence": 12,
+  "latestSequence": 44,
+  "processState": "running"
+}
