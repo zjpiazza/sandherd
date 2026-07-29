@@ -12,13 +12,14 @@ LDFLAGS := -s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$(VE
 
 .DEFAULT_GOAL := verify
 
-.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform smoke test verify
+.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform smoke test test-race verify
 
 help:
 	@printf '%s\n' \
 		'make verify          Run every local and CI verification check' \
 		'make fmt             Format Go source files' \
 		'make test            Run unit tests' \
+		'make test-race       Run unit tests with race detection' \
 		'make contracts       Validate OpenAPI and terminal contracts' \
 		'make build           Build host binaries into dist/' \
 		'make build-linux     Build Linux amd64 and arm64 binaries' \
@@ -38,6 +39,9 @@ lint:
 
 test:
 	$(GO) test ./...
+
+test-race:
+	$(GO) test -race ./...
 
 contracts:
 	./scripts/validate-contracts.sh
@@ -81,7 +85,7 @@ agent-sandbox-router-container:
 		--tag "$(AGENT_SANDBOX_ROUTER_IMAGE)" \
 		.
 
-verify: fmt-check lint test generated-check contracts platform smoke build-linux
+verify: fmt-check lint test-race generated-check contracts platform smoke build-linux
 
 clean:
 	rm -rf dist

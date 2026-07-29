@@ -4,9 +4,9 @@ package main
 import (
 	"os"
 
-	"github.com/zjpiazza/sandherd/internal/cliapp"
+	"github.com/zjpiazza/sandherd/internal/runner"
 )
 
 func main() {
-	os.Exit(cliapp.Run("runner", os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(runner.Run(os.Args[1:], os.Stdout, os.Stderr))
 }

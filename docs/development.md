@@ -19,6 +19,7 @@ internal/api/           Transport-neutral API types
 internal/auth/          Authentication and authorization boundary
 internal/kubernetes/    Kubernetes and Agent Sandbox adapter boundary
 internal/lifecycle/     Agent state transition boundary
+internal/runner/        PTY owner, replay hub, leases, and internal runner API
 internal/terminal/      Reconnectable terminal protocol boundary
 docs/adr/               Architecture decision records
 docs/platform/          Cluster installation and validation records
@@ -35,6 +36,7 @@ REST and terminal contracts, not by importing these packages.
 make verify          # every check required by CI
 make fmt             # format Go source
 make test            # unit tests
+make test-race       # unit tests with the race detector
 make contracts       # OpenAPI and terminal schema validation
 make build           # host binaries in dist/
 make build-linux     # amd64 and arm64 Linux binaries in dist/
@@ -56,6 +58,9 @@ The runtime container targets are `control-plane`, `runner`, and
 `herdr-bridge`. They contain only a statically linked binary, run as numeric
 user and group `65532:65532`, and intentionally contain neither a shell nor the
 Go compiler.
+
+The runner is implemented rather than scaffolded. Its complete command-line and
+internal API contract are documented in the [runner guide](runner.md).
 
 ## CI and generated files
 
