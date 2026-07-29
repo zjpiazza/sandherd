@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sandherd-unauthorized-router-client
+  namespace: default
+  labels:
+    app.kubernetes.io/name: sandherd-router-client
+    app.kubernetes.io/part-of: sandherd
+    sandherd.dev/smoke-test: "true"
+spec:
+  serviceAccountName: default
+  automountServiceAccountToken: true
+  restartPolicy: Never
+  containers:
+    - name: client
+      image: curlimages/curl:8.18.0@sha256:d94d07ba9e7d6de898b6d96c1a072f6f8266c687af78a74f380087a0addf5d17
+      command:
+        - /bin/sh
+        - -c
+        - sleep 3600
+      resources:
+        requests:
+          cpu: 5m
+          memory: 16Mi
+        limits:
+          cpu: 50m
+          memory: 32Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 102
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault

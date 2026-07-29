@@ -6,11 +6,13 @@ VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= unknown
 BINARIES := control-plane runner herdr-bridge
+KUSTOMIZE_VERSION ?= v5.8.1
+AGENT_SANDBOX_ROUTER_IMAGE ?= sandherd/agent-sandbox-router:v0.5.3
 LDFLAGS := -s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$(VERSION) -X github.com/zjpiazza/sandherd/internal/buildinfo.Commit=$(COMMIT) -X github.com/zjpiazza/sandherd/internal/buildinfo.Date=$(BUILD_DATE)
 
 .DEFAULT_GOAL := verify
 
-.PHONY: build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint smoke test verify
+.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform smoke test verify
 
 help:
 	@printf '%s\n' \
@@ -20,7 +22,9 @@ help:
 		'make contracts       Validate OpenAPI and terminal contracts' \
 		'make build           Build host binaries into dist/' \
 		'make build-linux     Build Linux amd64 and arm64 binaries' \
-		'make container-build Build all runtime container targets'
+		'make container-build Build all Sandherd runtime container targets' \
+		'make agent-sandbox-router-container Build the pinned upstream router' \
+		'make platform        Validate Agent Sandbox deployment manifests'
 
 fmt:
 	gofmt -w cmd internal
@@ -38,6 +42,9 @@ test:
 contracts:
 	./scripts/validate-contracts.sh
 
+platform:
+	KUSTOMIZE_VERSION="$(KUSTOMIZE_VERSION)" ./scripts/validate-platform.sh
+
 generate:
 	$(GO) generate ./...
 
@@ -46,7 +53,7 @@ generated-check:
 
 build: $(BINARIES:%=dist/%)
 
-dist/%:
+dist/%: FORCE
 	@mkdir -p dist
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o "$@" "./cmd/$*"
 
@@ -68,7 +75,15 @@ container-build:
 		$(DOCKER) build --target "$$binary" --tag "sandherd/$$binary:dev" . || exit 1; \
 	done
 
-verify: fmt-check lint test generated-check contracts smoke build-linux
+agent-sandbox-router-container:
+	$(DOCKER) build \
+		--file build/agent-sandbox-router/Dockerfile \
+		--tag "$(AGENT_SANDBOX_ROUTER_IMAGE)" \
+		.
+
+verify: fmt-check lint test generated-check contracts platform smoke build-linux
 
 clean:
 	rm -rf dist
+
+FORCE:

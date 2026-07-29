@@ -1,0 +1,116 @@
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: sandherd-smoke
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-smoke
+    app.kubernetes.io/part-of: sandherd
+    sandherd.dev/smoke-test: "true"
+spec:
+  service: true
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: agent-sandbox-system
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: sandbox-router
+                app.kubernetes.io/component: router
+        ports:
+          - protocol: TCP
+            port: 8888
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - protocol: UDP
+            port: 53
+          - protocol: TCP
+            port: 53
+  volumeClaimTemplatesPolicy: Disallowed
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+        labels:
+          app.kubernetes.io/name: sandherd-smoke
+          app.kubernetes.io/part-of: sandherd
+          sandherd.dev/smoke-test: "true"
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandherd-smoke
+        app.kubernetes.io/part-of: sandherd
+        sandherd.dev/smoke-test: "true"
+    spec:
+      serviceAccountName: sandherd-sandbox
+      automountServiceAccountToken: false
+      restartPolicy: Always
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runner
+          image: busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              mkdir -p /workspace/www
+              printf '%s\n' ok >/workspace/www/agent-health
+              exec httpd -f -p 8888 -h /workspace/www
+          ports:
+            - name: runner
+              containerPort: 8888
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /agent-health
+              port: runner
+            initialDelaySeconds: 0
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /agent-health
+              port: runner
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace

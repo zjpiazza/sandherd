@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Use this overlay when Flux installs the upstream controller through the
+# HelmRelease. It contains only Sandherd's platform resources and the
+# homelab-specific Cilium API allowance, avoiding a duplicate controller.
+resources:
+  - ../../platform
+  - ../../cilium-homelab
