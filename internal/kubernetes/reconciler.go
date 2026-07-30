@@ -24,13 +24,28 @@ type Reconciler struct {
 	repository       *Repository
 	namespace        string
 	profiles         map[string]string
+	storageProfiles  map[string]string
+	secretProfiles   map[string]string
 	events           EventPublisher
 	logger           *slog.Logger
 	provisionTimeout time.Duration
 }
 
 func NewReconciler(client dynamic.Interface, repository *Repository, namespace string, profiles map[string]string, events EventPublisher, logger *slog.Logger) *Reconciler {
-	return &Reconciler{client: client, repository: repository, namespace: namespace, profiles: profiles, events: events, logger: logger, provisionTimeout: 10 * time.Minute}
+	return &Reconciler{
+		client: client, repository: repository, namespace: namespace, profiles: profiles,
+		storageProfiles: map[string]string{"default": ""}, secretProfiles: map[string]string{},
+		events: events, logger: logger, provisionTimeout: 10 * time.Minute,
+	}
+}
+
+func (r *Reconciler) ConfigureWorkspaceProfiles(storageProfiles, secretProfiles map[string]string) {
+	if storageProfiles != nil {
+		r.storageProfiles = storageProfiles
+	}
+	if secretProfiles != nil {
+		r.secretProfiles = secretProfiles
+	}
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, id string) error {
@@ -60,11 +75,21 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	if !approved {
 		return r.transition(ctx, agent, lifecycle.StateFailed, "sandbox_profile_not_found", "the sandbox profile is not approved")
 	}
+	if agent.Spec.SecretProfile != "" {
+		pool, approved = r.secretProfiles[agent.Spec.SecretProfile]
+		if !approved {
+			return r.transition(ctx, agent, lifecycle.StateFailed, "secret_profile_not_found", "the repository secret profile is not approved")
+		}
+	}
+	storageClass, approved := r.storageProfiles[agent.Spec.Workspace.StorageProfile]
+	if !approved {
+		return r.transition(ctx, agent, lifecycle.StateFailed, "storage_profile_not_found", "the workspace storage profile is not approved")
+	}
 	claimName := claimName(agent.ID)
 	claims := r.client.Resource(SandboxClaimGVR).Namespace(r.namespace)
 	claim, err := claims.Get(ctx, claimName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		claim = sandboxClaim(agent, r.namespace, pool)
+		claim = sandboxClaimWithStorage(agent, r.namespace, pool, storageClass)
 		if _, err = claims.Create(ctx, claim, metav1.CreateOptions{FieldManager: DefaultFieldOwner}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return mapKubernetesError(err)
 		}
@@ -88,9 +113,9 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	if err != nil {
 		return mapKubernetesError(err)
 	}
-	replicas, found, _ := unstructured.NestedInt64(sandbox.Object, "spec", "replicas")
-	if found && replicas == 0 {
-		if err := r.patchReplicas(ctx, sandboxName, 1); err != nil {
+	operatingMode, _, _ := unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
+	if operatingMode == "Suspended" {
+		if err := r.patchOperatingMode(ctx, sandboxName, "Running"); err != nil {
 			return err
 		}
 		return r.transition(ctx, agent, lifecycle.StateStarting, "sandbox_resuming", "the sandbox is resuming")
@@ -103,6 +128,9 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 		return mapKubernetesError(err)
 	}
 	phase, _, _ := unstructured.NestedString(pod.Object, "status", "phase")
+	if reason, message, failed := bootstrapFailure(pod); failed {
+		return r.transition(ctx, agent, lifecycle.StateFailed, reason, message)
+	}
 	if phase == "Failed" {
 		return r.transition(ctx, agent, lifecycle.StateFailed, "runner_failed", "the runner pod failed")
 	}
@@ -131,12 +159,14 @@ func (r *Reconciler) reconcileStopped(ctx context.Context, agent lifecycle.Agent
 	if err != nil {
 		return mapKubernetesError(err)
 	}
-	replicas, found, _ := unstructured.NestedInt64(sandbox.Object, "status", "replicas")
-	if (found && replicas == 0) || conditionTrue(sandbox, "Suspended") {
+	if conditionTrue(sandbox, "Suspended") {
 		return r.transition(ctx, agent, lifecycle.StateStopped, "", "")
 	}
-	if err := r.patchReplicas(ctx, sandboxName, 0); err != nil {
-		return err
+	operatingMode, _, _ := unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
+	if operatingMode != "Suspended" {
+		if err := r.patchOperatingMode(ctx, sandboxName, "Suspended"); err != nil {
+			return err
+		}
 	}
 	return r.transition(ctx, agent, lifecycle.StateStopping, "sandbox_stopping", "the sandbox is stopping")
 }
@@ -165,8 +195,8 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, agent lifecycle.Agent)
 	return r.repository.FinalizeDelete(ctx, agent.ID)
 }
 
-func (r *Reconciler) patchReplicas(ctx context.Context, sandboxName string, replicas int64) error {
-	patch := []byte(fmt.Sprintf(`{"spec":{"replicas":%d}}`, replicas))
+func (r *Reconciler) patchOperatingMode(ctx context.Context, sandboxName, operatingMode string) error {
+	patch := []byte(fmt.Sprintf(`{"spec":{"operatingMode":%q}}`, operatingMode))
 	_, err := r.client.Resource(SandboxGVR).Namespace(r.namespace).Patch(ctx, sandboxName, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: DefaultFieldOwner})
 	if err != nil {
 		return mapKubernetesError(err)
@@ -219,7 +249,27 @@ func (r *Reconciler) transition(ctx context.Context, agent lifecycle.Agent, stat
 }
 
 func sandboxClaim(agent lifecycle.Agent, namespace, pool string) *unstructured.Unstructured {
+	return sandboxClaimWithStorage(agent, namespace, pool, "")
+}
+
+func sandboxClaimWithStorage(agent lifecycle.Agent, namespace, pool, storageClass string) *unstructured.Unstructured {
 	labels := map[string]any{ManagedLabel: "true", AgentIDLabel: agent.ID, OwnerHashLabel: ownerHash(agent.Owner)}
+	environment := []any{
+		map[string]any{"name": "SANDHERD_AGENT_ID", "value": agent.ID, "containerName": "runner"},
+	}
+	if agent.Spec.Repository != nil {
+		environment = append(environment,
+			map[string]any{"name": "SANDHERD_REPOSITORY_URL", "value": agent.Spec.Repository.URL, "containerName": "workspace-bootstrap"},
+			map[string]any{"name": "SANDHERD_REPOSITORY_REVISION", "value": agent.Spec.Repository.Revision, "containerName": "workspace-bootstrap"},
+		)
+	}
+	volumeSpec := map[string]any{
+		"accessModes": []any{"ReadWriteOnce"},
+		"resources":   map[string]any{"requests": map[string]any{"storage": agent.Spec.Workspace.Size}},
+	}
+	if storageClass != "" {
+		volumeSpec["storageClassName"] = storageClass
+	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "extensions.agents.x-k8s.io/v1beta1",
 		"kind":       "SandboxClaim",
@@ -228,18 +278,44 @@ func sandboxClaim(agent lifecycle.Agent, namespace, pool string) *unstructured.U
 			"warmPoolRef":           map[string]any{"name": pool},
 			"lifecycle":             map[string]any{"shutdownPolicy": "DeleteForeground"},
 			"additionalPodMetadata": map[string]any{"labels": labels},
-			"env": []any{
-				map[string]any{"name": "SANDHERD_AGENT_ID", "value": agent.ID, "containerName": "runner"},
-			},
+			"env":                   environment,
 			"volumeClaimTemplates": []any{map[string]any{
 				"metadata": map[string]any{"name": "workspace", "labels": labels},
-				"spec": map[string]any{
-					"accessModes": []any{"ReadWriteOnce"},
-					"resources":   map[string]any{"requests": map[string]any{"storage": agent.Spec.Workspace.Size}},
-				},
+				"spec":     volumeSpec,
 			}},
 		},
 	}}
+}
+
+func bootstrapFailure(pod *unstructured.Unstructured) (string, string, bool) {
+	statuses, _, _ := unstructured.NestedSlice(pod.Object, "status", "initContainerStatuses")
+	for _, value := range statuses {
+		status, ok := value.(map[string]any)
+		if !ok || status["name"] != "workspace-bootstrap" {
+			continue
+		}
+		exitCode, found, _ := unstructured.NestedInt64(status, "state", "terminated", "exitCode")
+		if !found || exitCode == 0 {
+			continue
+		}
+		switch exitCode {
+		case 20:
+			return "bootstrap_invalid", "workspace bootstrap configuration is invalid", true
+		case 21:
+			return "workspace_unsafe", "workspace bootstrap rejected an unsafe workspace", true
+		case 22:
+			return "repository_auth_failed", "repository authentication failed", true
+		case 23:
+			return "repository_bootstrap_failed", "repository bootstrap failed", true
+		case 24:
+			return "workspace_full", "the workspace is full", true
+		case 25:
+			return "bootstrap_timeout", "repository bootstrap timed out", true
+		default:
+			return "bootstrap_failed", "workspace bootstrap failed", true
+		}
+	}
+	return "", "", false
 }
 
 func claimName(id string) string { return "sandbox-" + strings.ReplaceAll(id, "-", "") }

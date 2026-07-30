@@ -1,0 +1,160 @@
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: sandherd-standard
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-standard
+    app.kubernetes.io/part-of: sandherd
+spec:
+  service: true
+  envVarsInjectionPolicy: Allowed
+  volumeClaimTemplatesPolicy: Allowed
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: agent-sandbox-system
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: sandbox-router
+                app.kubernetes.io/component: router
+        ports:
+          - protocol: TCP
+            port: 8080
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - protocol: UDP
+            port: 53
+          - protocol: TCP
+            port: 53
+      - ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 22
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandherd-agent
+        app.kubernetes.io/part-of: sandherd
+    spec:
+      serviceAccountName: sandherd-sandbox
+      automountServiceAccountToken: false
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: workspace-bootstrap
+          image: sandherd/agent-runtime:dev
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          command:
+            - /usr/local/bin/workspace-bootstrap
+          args:
+            - --workspace=/workspace
+            - --timeout=5m
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: temporary
+              mountPath: /tmp
+      containers:
+        - name: runner
+          image: sandherd/agent-runtime:dev
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          command:
+            - /usr/local/bin/sandherd-runner
+          args:
+            - --agent-id=$(SANDHERD_AGENT_ID)
+            - --listen=:8080
+            - --auth-token-file=
+            - --capability-public-key-file=/var/run/secrets/sandherd/capability-public-key.pem
+            - --working-directory=/workspace/repository
+            - --
+            - /bin/bash
+            - --noprofile
+            - --norc
+          env:
+            - name: HOME
+              value: /workspace
+          ports:
+            - name: runner
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: runner
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: runner
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: temporary
+              mountPath: /tmp
+            - name: capability-public-key
+              mountPath: /var/run/secrets/sandherd
+              readOnly: true
+      volumes:
+        - name: temporary
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: capability-public-key
+          configMap:
+            name: sandherd-runner-capability-key
+            items:
+              - key: public-key.pem
+                path: capability-public-key.pem

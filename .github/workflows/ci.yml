@@ -71,6 +71,8 @@ jobs:
           - control-plane
           - runner
           - herdr-bridge
+          - workspace-bootstrap
+          - agent-runtime
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

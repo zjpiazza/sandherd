@@ -9,6 +9,7 @@ extensions API used by `SandboxTemplate`, `SandboxWarmPool`, and
 ## What is installed
 
 - The Agent Sandbox controller, conversion webhook, CRDs, and extensions.
+- The controller metadata allowlist for Sandherd's `sandherd.dev/*` Pod labels.
 - Two authenticated sandbox-router replicas in `agent-sandbox-system`.
 - The `sandherd-system` namespace and least-privilege service accounts.
 - Network policies for controller API access, router ingress, DNS, and the

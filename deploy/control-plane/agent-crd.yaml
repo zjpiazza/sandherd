@@ -76,8 +76,12 @@ spec:
                       properties:
                         url:
                           type: string
+                          pattern: '^(https://[^/?#@]+(?:/[^?#]*)?|ssh://(?:[^/:@?#]+@)?[^/?#@]+(?:/[^?#]*)?)$'
                         revision:
                           type: string
+                          minLength: 1
+                          maxLength: 256
+                          pattern: '^[^-\x00-\x20\x7f][^\x00-\x20\x7f]{0,255}$'
                     resources:
                       type: object
                       required: [cpu, memory]

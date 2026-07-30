@@ -96,6 +96,7 @@ The control plane manages durable agent lifecycle through a REST API. Interactiv
 - [REST lifecycle API](api/openapi.yaml)
 - [Terminal attachment protocol](api/terminal.md)
 - [In-sandbox runner protocol and operations](docs/runner.md)
+- [Durable workspaces and repository bootstrap](docs/workspaces.md)
 - [Lifecycle control plane](docs/control-plane.md)
 - [Herdr integration](docs/herdr-integration.md)
 - [Resource and API model](docs/adr/0001-resource-and-api-model.md)
@@ -171,7 +172,7 @@ The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` comman
 - [ ] Create, inspect, stop, resume, and delete agents through the control plane
 - [x] Stream an interactive terminal over WebSocket
 - [x] Ship the first Herdr integration
-- [ ] Add PVC-backed agent workspaces
+- [x] Add PVC-backed agent workspaces
 - [ ] Add scoped secrets and default-deny network policies
 - [ ] Add gVisor runtime support
 - [ ] Add warm pools for low-latency agent startup
