@@ -4,9 +4,9 @@ package main
 import (
 	"os"
 
-	"github.com/zjpiazza/sandherd/internal/cliapp"
+	"github.com/zjpiazza/sandherd/internal/herdrbridge"
 )
 
 func main() {
-	os.Exit(cliapp.Run("herdr-bridge", os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(herdrbridge.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

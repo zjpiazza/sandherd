@@ -97,6 +97,7 @@ The control plane manages durable agent lifecycle through a REST API. Interactiv
 - [Terminal attachment protocol](api/terminal.md)
 - [In-sandbox runner protocol and operations](docs/runner.md)
 - [Lifecycle control plane](docs/control-plane.md)
+- [Herdr integration](docs/herdr-integration.md)
 - [Resource and API model](docs/adr/0001-resource-and-api-model.md)
 - [Agent Sandbox cluster foundation](docs/platform/agent-sandbox.md)
 
@@ -169,7 +170,7 @@ The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` comman
 - [ ] Build the reconnectable sandbox runner
 - [ ] Create, inspect, stop, resume, and delete agents through the control plane
 - [x] Stream an interactive terminal over WebSocket
-- [ ] Ship the first Herdr integration
+- [x] Ship the first Herdr integration
 - [ ] Add PVC-backed agent workspaces
 - [ ] Add scoped secrets and default-deny network policies
 - [ ] Add gVisor runtime support

@@ -19,6 +19,7 @@ deploy/control-plane/   Agent CRD, API deployment, RBAC, and network policy
 deploy/control-plane-homelab/ Cilium overlay for the Talos homelab
 internal/api/           Transport-neutral API types
 internal/auth/          Authentication and authorization boundary
+internal/herdrbridge/   Herdr plugin, API client, and terminal bridge
 internal/kubernetes/    Kubernetes and Agent Sandbox adapter boundary
 internal/lifecycle/     Agent state transition boundary
 internal/runner/        PTY owner, replay hub, leases, and internal runner API
@@ -47,8 +48,8 @@ make platform        # render and validate Agent Sandbox manifests
 make agent-sandbox-router-container # build the pinned upstream router
 ```
 
-Each command scaffold can report its build metadata without contacting any
-external dependency:
+Each command can report its build metadata without contacting any external
+dependency:
 
 ```sh
 go run ./cmd/control-plane --version
@@ -64,6 +65,8 @@ Go compiler.
 The runner's complete command-line and internal API contract are documented in
 the [runner guide](runner.md). The lifecycle API and Kubernetes controller are
 documented in the [control-plane guide](control-plane.md).
+The plugin manifest, local linking flow, actions, and reconnect behavior are in
+the [Herdr integration guide](herdr-integration.md).
 
 ## CI and generated files
 
