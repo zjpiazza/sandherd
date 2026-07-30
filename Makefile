@@ -13,7 +13,7 @@ LDFLAGS := -s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$(VE
 
 .DEFAULT_GOAL := verify
 
-.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform smoke test test-race verify
+.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform rbac-check smoke test test-race verify
 
 help:
 	@printf '%s\n' \
@@ -26,7 +26,8 @@ help:
 		'make build-linux     Build Linux amd64 and arm64 binaries' \
 		'make container-build Build all Sandherd runtime container targets' \
 		'make agent-sandbox-router-container Build the pinned upstream router' \
-		'make platform        Validate Agent Sandbox deployment manifests'
+		'make platform        Validate Agent Sandbox deployment manifests' \
+		'make rbac-check      Verify live homelab service-account permissions'
 
 fmt:
 	gofmt -w cmd internal
@@ -49,6 +50,9 @@ contracts:
 
 platform:
 	KUSTOMIZE_VERSION="$(KUSTOMIZE_VERSION)" ./scripts/validate-platform.sh
+
+rbac-check:
+	./scripts/check-sandherd-rbac.sh
 
 generate:
 	$(GO) generate ./...

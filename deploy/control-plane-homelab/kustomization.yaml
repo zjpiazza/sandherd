@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../control-plane
   - kube-api-egress.yaml
+  - tailscale-service.yaml
 
 patches:
   - target:

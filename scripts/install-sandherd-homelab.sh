@@ -6,13 +6,13 @@ kubectl_bin=${KUBECTL:-kubectl}
 context=${KUBE_CONTEXT:-admin@homelab}
 control_plane_image=${CONTROL_PLANE_IMAGE:-}
 agent_runtime_image=${AGENT_RUNTIME_IMAGE:-}
-api_token_file=${SANDHERD_API_TOKEN_FILE:-}
+principals_file=${SANDHERD_API_PRINCIPALS_FILE:-}
 private_key_file=${SANDHERD_CAPABILITY_PRIVATE_KEY_FILE:-}
 public_key_file=${SANDHERD_CAPABILITY_PUBLIC_KEY_FILE:-}
 overlay=${SANDHERD_OVERLAY:-$repo_root/deploy/control-plane-homelab}
 dry_run=${DRY_RUN:-}
 
-for value_name in CONTROL_PLANE_IMAGE AGENT_RUNTIME_IMAGE SANDHERD_API_TOKEN_FILE SANDHERD_CAPABILITY_PRIVATE_KEY_FILE SANDHERD_CAPABILITY_PUBLIC_KEY_FILE; do
+for value_name in CONTROL_PLANE_IMAGE AGENT_RUNTIME_IMAGE SANDHERD_API_PRINCIPALS_FILE SANDHERD_CAPABILITY_PRIVATE_KEY_FILE SANDHERD_CAPABILITY_PUBLIC_KEY_FILE; do
   eval "value=\${$value_name:-}"
   if [ -z "$value" ]; then
     printf '%s is required.\n' "$value_name" >&2
@@ -27,7 +27,7 @@ case "$control_plane_image$agent_runtime_image" in
     ;;
 esac
 
-for required_file in "$api_token_file" "$private_key_file" "$public_key_file"; do
+for required_file in "$principals_file" "$private_key_file" "$public_key_file"; do
   if [ ! -f "$required_file" ]; then
     printf 'Required credential file does not exist: %s\n' "$required_file" >&2
     exit 2
@@ -79,8 +79,8 @@ if [ -n "$dry_run" ]; then
   apply_args="--dry-run=$dry_run"
 fi
 
-"$kubectl_bin" --context "$context" --namespace sandherd-system create secret generic sandherd-api-token \
-  --from-file="token=$api_token_file" --dry-run=client --output=yaml |
+"$kubectl_bin" --context "$context" --namespace sandherd-system create secret generic sandherd-api-principals \
+  --from-file="principals.json=$principals_file" --dry-run=client --output=yaml |
   "$kubectl_bin" --context "$context" apply $apply_args --filename=-
 "$kubectl_bin" --context "$context" --namespace sandherd-system create secret generic sandherd-runner-capability-signing-key \
   --from-file="private-key.pem=$private_key_file" --dry-run=client --output=yaml |

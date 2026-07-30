@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/subtle"
 	"flag"
 	"fmt"
 	"io"
@@ -51,13 +50,11 @@ type runConfig struct {
 	namespace            string
 	kubeconfig           string
 	context              string
-	tokenFile            string
-	observeTokenFile     string
+	principalsFile       string
 	capabilityPrivateKey string
 	routerURL            string
 	routerTokenFile      string
 	runnerPort           int
-	owner                string
 	profiles             profileMap
 	storageProfiles      profileMap
 	secretProfiles       profileMap
@@ -91,13 +88,11 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 	flags.StringVar(&configuration.namespace, "namespace", "sandherd-system", "managed Kubernetes namespace")
 	flags.StringVar(&configuration.kubeconfig, "kubeconfig", "", "kubeconfig path (defaults to in-cluster or standard loading rules)")
 	flags.StringVar(&configuration.context, "context", "", "kubeconfig context override")
-	flags.StringVar(&configuration.tokenFile, "auth-token-file", "/var/run/secrets/sandherd/api-token", "file containing the API bearer token")
-	flags.StringVar(&configuration.observeTokenFile, "observe-token-file", "", "optional file containing an observe-only API bearer token")
+	flags.StringVar(&configuration.principalsFile, "auth-principals-file", "/var/run/secrets/sandherd/principals.json", "reloadable JSON file containing API principals and bearer credentials")
 	flags.StringVar(&configuration.capabilityPrivateKey, "capability-private-key-file", "/var/run/secrets/sandherd/capability-private-key.pem", "Ed25519 key used to sign short-lived runner capabilities")
 	flags.StringVar(&configuration.routerURL, "sandbox-router-url", "http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080", "Agent Sandbox router URL")
 	flags.StringVar(&configuration.routerTokenFile, "sandbox-router-token-file", "/var/run/secrets/kubernetes.io/serviceaccount/token", "Kubernetes bearer token used with the sandbox router")
 	flags.IntVar(&configuration.runnerPort, "runner-port", 8080, "runner port inside each sandbox")
-	flags.StringVar(&configuration.owner, "owner-id", "", "stable owner ID represented by the static credential")
 	flags.Var(configuration.profiles, "sandbox-profile", "approved public-profile=warm-pool mapping (repeatable)")
 	flags.Var(configuration.storageProfiles, "storage-profile", "approved public-profile=storage-class mapping; use '-' for the cluster default (repeatable)")
 	flags.Var(configuration.secretProfiles, "secret-profile", "approved public-profile=credentialed-warm-pool mapping (repeatable)")
@@ -115,10 +110,6 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 	if *showVersion {
 		return runConfig{}, true, nil
 	}
-	if configuration.owner == "" || len(configuration.owner) > 256 {
-		fmt.Fprintln(stderr, "control-plane: --owner-id is required and must not exceed 256 characters")
-		return runConfig{}, false, fmt.Errorf("invalid owner ID")
-	}
 	if configuration.storageProfiles["default"] == "-" {
 		configuration.storageProfiles["default"] = ""
 	}
@@ -127,26 +118,16 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 			configuration.storageProfiles[profile] = ""
 		}
 	}
-	if configuration.namespace == "" || len(configuration.profiles) == 0 || len(configuration.storageProfiles) == 0 || configuration.capabilityPrivateKey == "" || configuration.routerURL == "" || configuration.routerTokenFile == "" || configuration.runnerPort < 1 || configuration.runnerPort > 65535 {
+	if configuration.namespace == "" || configuration.principalsFile == "" || len(configuration.profiles) == 0 || len(configuration.storageProfiles) == 0 || configuration.capabilityPrivateKey == "" || configuration.routerURL == "" || configuration.routerTokenFile == "" || configuration.runnerPort < 1 || configuration.runnerPort > 65535 {
 		return runConfig{}, false, fmt.Errorf("namespace, gateway routing, and at least one sandbox profile are required")
 	}
 	return configuration, false, nil
 }
 
 func execute(configuration runConfig, stderr io.Writer) error {
-	token, err := readToken(configuration.tokenFile)
+	clientAuthenticator, err := internalauth.NewFileAuthenticator(configuration.principalsFile)
 	if err != nil {
-		return fmt.Errorf("read API token: %w", err)
-	}
-	var observeToken []byte
-	if configuration.observeTokenFile != "" {
-		observeToken, err = readToken(configuration.observeTokenFile)
-		if err != nil {
-			return fmt.Errorf("read observe API token: %w", err)
-		}
-		if subtle.ConstantTimeCompare(token, observeToken) == 1 {
-			return fmt.Errorf("control and observe API tokens must differ")
-		}
+		return fmt.Errorf("configure API authentication: %w", err)
 	}
 	privateKeyContents, err := os.ReadFile(filepath.Clean(configuration.capabilityPrivateKey))
 	if err != nil {
@@ -195,7 +176,7 @@ func execute(configuration runConfig, stderr io.Writer) error {
 		return fmt.Errorf("verify Agent API access: %w", err)
 	}
 	ready.Store(true)
-	api := NewServer(repository, controller, events, logger, token, observeToken, configuration.owner, ready.Load, terminalGateway)
+	api := NewServer(repository, controller, events, logger, clientAuthenticator, ready.Load, terminalGateway)
 	httpServer := &http.Server{
 		Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
@@ -206,7 +187,7 @@ func execute(configuration runConfig, stderr io.Writer) error {
 	go func() { controllerError <- controller.Run(ctx) }()
 	serverError := make(chan error, 1)
 	go func() { serverError <- httpServer.Serve(listener) }()
-	logger.Info("control-plane API listening", "address", listener.Addr().String(), "owner", configuration.owner)
+	logger.Info("control-plane API listening", "address", listener.Addr().String())
 	select {
 	case <-ctx.Done():
 	case err := <-controllerError:
@@ -243,16 +224,4 @@ func loadKubeConfig(configuration runConfig) (*rest.Config, error) {
 		return nil, fmt.Errorf("load Kubernetes configuration: %w", err)
 	}
 	return result, nil
-}
-
-func readToken(path string) ([]byte, error) {
-	contents, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return nil, err
-	}
-	token := []byte(strings.TrimSpace(string(contents)))
-	if len(token) < 16 {
-		return nil, fmt.Errorf("token must contain at least 16 non-whitespace bytes")
-	}
-	return token, nil
 }

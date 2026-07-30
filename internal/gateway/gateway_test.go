@@ -1,11 +1,11 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -164,6 +164,7 @@ type gatewayHarness struct {
 	gateway *Gateway
 	events  *lifecycle.EventBus
 	server  *httptest.Server
+	logs    *bytes.Buffer
 }
 
 func newGatewayHarness(t *testing.T, backend *runnerBackend, signer *auth.Signer, limits Limits, canControl bool) *gatewayHarness {
@@ -174,15 +175,16 @@ func newGatewayHarness(t *testing.T, backend *runnerBackend, signer *auth.Signer
 		t.Fatal(err)
 	}
 	events := lifecycle.NewEventBus(64)
+	logs := &bytes.Buffer{}
 	gateway, err := New(Config{
 		Resolver: fakeResolver{target: kubernetes.RunnerTarget{AgentID: testAgentID, SandboxName: "sandbox-internal", Namespace: "sandherd-system"}},
-		Signer:   signer, Events: events, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Signer:   signer, Events: events, Logger: slog.New(slog.NewJSONHandler(logs, nil)),
 		RouterURL: routerServer.URL, RouterTokenFile: tokenFile, RunnerPort: 8080, Limits: limits,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	harness := &gatewayHarness{gateway: gateway, events: events}
+	harness := &gatewayHarness{gateway: gateway, events: events, logs: logs}
 	harness.server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if err := gateway.ServeTerminal(response, request, "owner", testAgentID, "request-test", canControl); err != nil {
 			typed, ok := err.(*lifecycle.Error)
@@ -315,6 +317,11 @@ func TestGatewayPreservesFramesAndInternalizesRouterDetails(t *testing.T) {
 	for _, name := range []string{"sandherd_gateway_bytes_from_client_total", "sandherd_gateway_bytes_to_client_total", "sandherd_gateway_replay_gaps_total", "sandherd_gateway_failures_total"} {
 		if !strings.Contains(metrics, name) {
 			t.Fatalf("metrics missing %s: %s", name, metrics)
+		}
+	}
+	for _, canary := range []string{"AP8=", `"nonce":"p"`} {
+		if strings.Contains(metrics, canary) || strings.Contains(harness.logs.String(), canary) {
+			t.Fatalf("terminal content canary leaked into telemetry: %q", canary)
 		}
 	}
 }

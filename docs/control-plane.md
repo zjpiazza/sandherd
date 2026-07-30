@@ -57,23 +57,24 @@ filter by public state or exact name. Errors use the OpenAPI error envelope and
 never expose Kubernetes messages. Lifecycle events are held in a bounded
 in-memory replay buffer for SSE reconnects; terminal bytes are never events.
 
-End-user identity-provider integration remains issue #9. The MVP process uses
-one control bearer token, an optional observe-only token, and one stable owner
-ID, supplied only through mounted files and command flags. Terminal streams use
+The authentication boundary is replaceable. The initial implementation reads a
+reloadable principal file containing stable IDs, observe/control permissions,
+secret-profile allowlists, and independent bearer tokens. Terminal streams use
 the [gateway security and routing model](terminal-gateway.md):
 
 ```sh
 go run ./cmd/control-plane \
   --context admin@homelab \
   --namespace sandherd-system \
-  --owner-id homelab \
-  --auth-token-file /run/sandherd/api-token \
+  --auth-principals-file /run/sandherd/principals.json \
   --capability-private-key-file /run/sandherd/capability-private-key.pem \
   --sandbox-router-token-file /var/run/secrets/kubernetes.io/serviceaccount/token \
   --sandbox-profile standard=sandherd-standard
 ```
 
-The API never accepts a caller-supplied owner header.
+The API never accepts a caller-supplied owner header. See the complete
+[security model](security.md) for the file schema, ownership rules, audit
+events, isolation boundaries, and rotation procedure.
 
 ## Kubernetes deployment
 
@@ -84,13 +85,15 @@ runner Pods, and release retained PVCs. It cannot create Pods, Deployments,
 Jobs, or workloads outside `sandherd-system`.
 
 Before applying the deployment, publish the control-plane image, configure an
-approved `SandboxWarmPool`, patch the example image/owner as needed, and create
-the API token without committing it:
+approved `SandboxWarmPool`, patch the example image as needed, and create a
+principal file outside the repository from
+[`docs/examples/principals.json`](examples/principals.json). Then create the
+Secret without committing it:
 
 ```sh
 kubectl --context admin@homelab --namespace sandherd-system \
-  create secret generic sandherd-api-token \
-  --from-literal=token='replace-with-a-long-random-token'
+  create secret generic sandherd-api-principals \
+  --from-file=principals.json=/secure/path/principals.json
 
 # Create the signing key Secret described in docs/terminal-gateway.md too.
 
@@ -119,6 +122,8 @@ The Pod explicitly mounts its namespace-scoped service-account token because
 the control plane is the sole Sandherd component authorized to call Kubernetes
 and the authenticated Agent Sandbox router.
 Sandbox service accounts continue to set `automountServiceAccountToken: false`.
+The homelab overlay also exposes only the control-plane Service through the
+installed Tailscale operator; sandboxes do not join the tailnet.
 
 ## Restart and failure semantics
 

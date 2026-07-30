@@ -8,14 +8,14 @@ agent process starts in `/workspace/repository`; Sandherd's private bootstrap
 state lives in `/workspace/.sandherd` with mode `0700`.
 
 For a source-checkout homelab deployment, first install Agent Sandbox, publish
-the control-plane and `agent-runtime` images, create the API token and Ed25519
+the control-plane and `agent-runtime` images, create the API principals file and Ed25519
 key files described in the [terminal gateway guide](terminal-gateway.md), then
 run:
 
 ```sh
 CONTROL_PLANE_IMAGE=registry.example/sandherd-control-plane:dev \
 AGENT_RUNTIME_IMAGE=registry.example/sandherd-agent-runtime:dev \
-SANDHERD_API_TOKEN_FILE=/secure/path/api-token \
+SANDHERD_API_PRINCIPALS_FILE=/secure/path/principals.json \
 SANDHERD_CAPABILITY_PRIVATE_KEY_FILE=/secure/path/capability-private-key.pem \
 SANDHERD_CAPABILITY_PUBLIC_KEY_FILE=/secure/path/capability-public-key.pem \
 ./scripts/install-sandherd-homelab.sh
@@ -87,6 +87,9 @@ The HTTPS and SSH examples under
 the isolation boundary. Their Secret volume is mounted only into the
 `workspace-bootstrap` init container—not the long-running `runner` container.
 Each credentialed pool should represent one narrowly scoped repository policy.
+The authenticated principal must also list that public profile in its
+`secretProfiles` allowlist; otherwise create returns
+`forbidden_secret_profile` before any cluster resource is created.
 
 For HTTPS, create a JSON credential with a provider-specific username and token:
 

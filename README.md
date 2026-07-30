@@ -98,6 +98,7 @@ The control plane manages durable agent lifecycle through a REST API. Interactiv
 - [In-sandbox runner protocol and operations](docs/runner.md)
 - [Durable workspaces and repository bootstrap](docs/workspaces.md)
 - [Lifecycle control plane](docs/control-plane.md)
+- [Security model and operations](docs/security.md)
 - [Herdr integration](docs/herdr-integration.md)
 - [Resource and API model](docs/adr/0001-resource-and-api-model.md)
 - [Agent Sandbox cluster foundation](docs/platform/agent-sandbox.md)
@@ -173,7 +174,7 @@ The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` comman
 - [x] Stream an interactive terminal over WebSocket
 - [x] Ship the first Herdr integration
 - [x] Add PVC-backed agent workspaces
-- [ ] Add scoped secrets and default-deny network policies
+- [x] Add scoped secrets and default-deny network policies
 - [ ] Add gVisor runtime support
 - [ ] Add warm pools for low-latency agent startup
 - [ ] Publish a Helm chart and GitOps deployment examples

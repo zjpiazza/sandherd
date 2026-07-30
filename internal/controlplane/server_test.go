@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 	cluster "github.com/zjpiazza/sandherd/internal/kubernetes"
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,7 +22,44 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
-const apiToken = "control-plane-test-token"
+const (
+	apiToken        = "control-plane-test-token-value-long-enough"
+	observeAPIToken = "observe-api-token-for-tests-value-long-enough"
+	otherAPIToken   = "other-control-token-for-tests-value-long-enough"
+)
+
+type testAuthenticator map[string]internalauth.Principal
+
+type authenticatorFunc func(context.Context, string) (internalauth.Principal, error)
+
+func (f authenticatorFunc) Authenticate(ctx context.Context, token string) (internalauth.Principal, error) {
+	return f(ctx, token)
+}
+
+func (a testAuthenticator) Authenticate(_ context.Context, token string) (internalauth.Principal, error) {
+	principal, ok := a[token]
+	if !ok {
+		return internalauth.Principal{}, internalauth.ErrUnauthenticated
+	}
+	return principal, nil
+}
+
+func newTestAuthenticator(t *testing.T) testAuthenticator {
+	t.Helper()
+	control, err := internalauth.NewPrincipal("owner", []internalauth.Permission{internalauth.PermissionControl}, []string{"personal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer, err := internalauth.NewPrincipal("owner", []internalauth.Permission{internalauth.PermissionObserve}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := internalauth.NewPrincipal("other-owner", []internalauth.Permission{internalauth.PermissionControl}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testAuthenticator{apiToken: control, observeAPIToken: observer, otherAPIToken: other}
+}
 
 type recordingEnqueuer struct {
 	mu  sync.Mutex
@@ -31,6 +69,22 @@ type recordingEnqueuer struct {
 type recordingTerminalGateway struct {
 	called     bool
 	canControl bool
+}
+
+type ownershipTerminalGateway struct {
+	repository *cluster.Repository
+}
+
+func (g ownershipTerminalGateway) ServeTerminal(response http.ResponseWriter, request *http.Request, owner, agentID, _ string, _ bool) error {
+	if _, err := g.repository.Get(request.Context(), owner, agentID); err != nil {
+		return err
+	}
+	response.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (ownershipTerminalGateway) Metrics(response http.ResponseWriter, _ *http.Request) {
+	response.WriteHeader(http.StatusOK)
 }
 
 func (g *recordingTerminalGateway) ServeTerminal(response http.ResponseWriter, _ *http.Request, _, _, _ string, canControl bool) error {
@@ -59,7 +113,7 @@ func testAPI(t *testing.T) (*cluster.Repository, *recordingEnqueuer, *lifecycle.
 	repository := cluster.NewRepository(client, "sandherd-system")
 	enqueuer := &recordingEnqueuer{}
 	events := lifecycle.NewEventBus(32)
-	server := NewServer(repository, enqueuer, events, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte(apiToken), nil, "owner", func() bool { return true }, nil)
+	server := NewServer(repository, enqueuer, events, slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, nil)
 	httpServer := httptest.NewServer(server.Handler())
 	t.Cleanup(httpServer.Close)
 	return repository, enqueuer, events, httpServer
@@ -70,12 +124,16 @@ func createPayload(name string) string {
 }
 
 func apiRequest(t *testing.T, method, url, body, idempotency, ifMatch string) *http.Response {
+	return apiRequestAs(t, apiToken, method, url, body, idempotency, ifMatch)
+}
+
+func apiRequestAs(t *testing.T, token, method, url, body, idempotency, ifMatch string) *http.Response {
 	t.Helper()
 	request, err := http.NewRequest(method, url, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer "+apiToken)
+	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	if idempotency != "" {
 		request.Header.Set("Idempotency-Key", idempotency)
@@ -153,11 +211,16 @@ func TestLifecycleAPIIdempotencyETagsAndTransitions(t *testing.T) {
 
 func TestLifecycleAPIValidationFilteringAndErrors(t *testing.T) {
 	_, _, _, httpServer := testAPI(t)
-	unauthorized, err := http.Get(httpServer.URL + "/v1alpha1/agents")
-	if err != nil {
-		t.Fatal(err)
+	for _, path := range []string{"/v1alpha1/agents", "/v1alpha1/events", "/v1alpha1/agents/019c09f2-34c1-7ee0-9c66-d52919d67380/terminal"} {
+		unauthorized, err := http.Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if unauthorized.Header.Get("WWW-Authenticate") != "Bearer" {
+			t.Fatalf("%s WWW-Authenticate = %q", path, unauthorized.Header.Get("WWW-Authenticate"))
+		}
+		assertAPIError(t, unauthorized, http.StatusUnauthorized, "unauthenticated")
 	}
-	assertAPIError(t, unauthorized, http.StatusUnauthorized, "unauthenticated")
 	missingKey := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", createPayload("alpha"), "", "")
 	assertAPIError(t, missingKey, http.StatusBadRequest, "invalid_idempotency_key")
 	invalid := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", strings.Replace(createPayload("alpha"), `"cpu":"1"`, `"cpu":"not-a-quantity"`, 1), "key", "")
@@ -176,6 +239,18 @@ func TestLifecycleAPIValidationFilteringAndErrors(t *testing.T) {
 	assertAPIError(t, badLimit, http.StatusBadRequest, "invalid_limit")
 }
 
+func TestAuthenticationBackendUnavailableIsRetryable(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	authenticator := authenticatorFunc(func(context.Context, string) (internalauth.Principal, error) {
+		return internalauth.Principal{}, internalauth.ErrUnavailable
+	})
+	server := NewServer(cluster.NewRepository(client, "sandherd-system"), &recordingEnqueuer{}, lifecycle.NewEventBus(1), slog.New(slog.NewTextHandler(io.Discard, nil)), authenticator, func() bool { return true }, nil)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	response := apiRequestAs(t, apiToken, http.MethodGet, httpServer.URL+"/v1alpha1/agents", "", "", "")
+	assertAPIError(t, response, http.StatusServiceUnavailable, "authentication_unavailable")
+}
+
 func TestObserveCredentialIsReadOnlyAndReachesTerminalGateway(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		cluster.AgentGVR: "AgentList", cluster.SandboxClaimGVR: "SandboxClaimList", cluster.SandboxGVR: "SandboxList",
@@ -183,12 +258,12 @@ func TestObserveCredentialIsReadOnlyAndReachesTerminalGateway(t *testing.T) {
 	})
 	repository := cluster.NewRepository(client, "sandherd-system")
 	terminal := &recordingTerminalGateway{}
-	server := NewServer(repository, &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewTextHandler(io.Discard, nil)), []byte(apiToken), []byte("observe-api-token-for-tests"), "owner", func() bool { return true }, terminal)
+	server := NewServer(repository, &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, terminal)
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 
 	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/v1alpha1/agents/019c09f2-34c1-7ee0-9c66-d52919d67380/terminal", nil)
-	request.Header.Set("Authorization", "Bearer observe-api-token-for-tests")
+	request.Header.Set("Authorization", "Bearer "+observeAPIToken)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -198,13 +273,77 @@ func TestObserveCredentialIsReadOnlyAndReachesTerminalGateway(t *testing.T) {
 		t.Fatalf("terminal status=%d called=%v control=%v", response.StatusCode, terminal.called, terminal.canControl)
 	}
 	create, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/v1alpha1/agents", strings.NewReader(createPayload("read-only")))
-	create.Header.Set("Authorization", "Bearer observe-api-token-for-tests")
+	create.Header.Set("Authorization", "Bearer "+observeAPIToken)
 	create.Header.Set("Idempotency-Key", "read-only")
 	response, err = http.DefaultClient.Do(create)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertAPIError(t, response, http.StatusForbidden, "forbidden_role")
+}
+
+func TestPrincipalsCannotAccessAnotherOwnersAgents(t *testing.T) {
+	repository, _, events, initialServer := testAPI(t)
+	created := apiRequest(t, http.MethodPost, initialServer.URL+"/v1alpha1/agents", createPayload("shared-name"), "owner-create", "")
+	agent := decodeAgent(t, created)
+
+	server := NewServer(repository, &recordingEnqueuer{}, events, slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, ownershipTerminalGateway{repository: repository})
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	listResponse := apiRequestAs(t, otherAPIToken, http.MethodGet, httpServer.URL+"/v1alpha1/agents", "", "", "")
+	defer listResponse.Body.Close()
+	var list lifecycle.AgentList
+	if err := json.NewDecoder(listResponse.Body).Decode(&list); err != nil || len(list.Items) != 0 {
+		t.Fatalf("other owner's list = %#v, error %v", list, err)
+	}
+	for _, path := range []string{"/v1alpha1/agents/" + agent.ID, "/v1alpha1/agents/" + agent.ID + "/terminal"} {
+		response := apiRequestAs(t, otherAPIToken, http.MethodGet, httpServer.URL+path, "", "", "")
+		assertAPIError(t, response, http.StatusNotFound, "agent_not_found")
+	}
+	deleted := apiRequestAs(t, otherAPIToken, http.MethodDelete, httpServer.URL+"/v1alpha1/agents/"+agent.ID, "", "", "")
+	assertAPIError(t, deleted, http.StatusNotFound, "agent_not_found")
+
+	otherCreated := apiRequestAs(t, otherAPIToken, http.MethodPost, httpServer.URL+"/v1alpha1/agents", createPayload("shared-name"), "other-create", "")
+	if otherCreated.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(otherCreated.Body)
+		_ = otherCreated.Body.Close()
+		t.Fatalf("other owner create status=%d body=%s", otherCreated.StatusCode, body)
+	}
+	if otherAgent := decodeAgent(t, otherCreated); otherAgent.Owner != "other-owner" || otherAgent.ID == agent.ID {
+		t.Fatalf("other owner's agent = %#v", otherAgent)
+	}
+}
+
+func TestPrincipalSecretProfileAuthorization(t *testing.T) {
+	_, _, _, httpServer := testAPI(t)
+	payload := strings.Replace(createPayload("profiled"), `"sandboxProfile":"standard"`, `"sandboxProfile":"standard","repository":{"url":"https://example.invalid/repository.git"},"secretProfile":"personal"`, 1)
+	allowed := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", payload, "profile-allowed", "")
+	if allowed.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(allowed.Body)
+		_ = allowed.Body.Close()
+		t.Fatalf("allowed profile status=%d body=%s", allowed.StatusCode, body)
+	}
+	_ = allowed.Body.Close()
+	denied := apiRequestAs(t, otherAPIToken, http.MethodPost, httpServer.URL+"/v1alpha1/agents", strings.Replace(payload, `"name":"profiled"`, `"name":"profiled-other"`, 1), "profile-denied", "")
+	assertAPIError(t, denied, http.StatusForbidden, "forbidden_secret_profile")
+}
+
+func TestAuthenticationAuditDoesNotLeakCredential(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		cluster.AgentGVR: "AgentList", cluster.SandboxClaimGVR: "SandboxClaimList", cluster.SandboxGVR: "SandboxList",
+		cluster.PodGVR: "PodList", cluster.PVCGVR: "PersistentVolumeClaimList",
+	})
+	var logs bytes.Buffer
+	server := NewServer(cluster.NewRepository(client, "sandherd-system"), &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewJSONHandler(&logs, nil)), newTestAuthenticator(t), func() bool { return true }, nil)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+	canary := "credential-canary-value-that-must-never-be-logged"
+	response := apiRequestAs(t, canary, http.MethodGet, httpServer.URL+"/v1alpha1/agents", "", "", "")
+	assertAPIError(t, response, http.StatusUnauthorized, "unauthenticated")
+	if strings.Contains(logs.String(), canary) || !strings.Contains(logs.String(), `"audit_event":"authentication_failed"`) {
+		t.Fatalf("unsafe or missing security audit log: %s", logs.String())
+	}
 }
 
 func TestLifecycleEventSSEReplayAndExpiredCursor(t *testing.T) {

@@ -112,6 +112,8 @@ paths:
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
     get:
@@ -162,6 +164,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /v1alpha1/agents/{agentId}:
@@ -191,6 +195,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
@@ -224,6 +230,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /v1alpha1/agents/{agentId}:stop:
@@ -252,6 +260,8 @@ paths:
           $ref: '#/components/responses/InvalidStateTransition'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /v1alpha1/agents/{agentId}:resume:
@@ -281,6 +291,8 @@ paths:
           $ref: '#/components/responses/InvalidStateTransition'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /v1alpha1/events:
@@ -343,6 +355,8 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
   /v1alpha1/agents/{agentId}/terminal:
@@ -403,6 +417,8 @@ paths:
                       details: {}
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
 components:
@@ -510,6 +526,24 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    AuthenticationUnavailable:
+      description: The configured authentication backend is temporarily unavailable
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/RequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            backendUnavailable:
+              value:
+                error:
+                  code: authentication_unavailable
+                  message: Authentication is temporarily unavailable.
+                  requestId: 019c1234-1234-7123-8123-123456789abc
+                  retryable: true
+                  details: {}
     NotFound:
       description: Agent not found or not visible to the authenticated principal
       headers:

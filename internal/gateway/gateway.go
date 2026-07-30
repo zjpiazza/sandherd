@@ -141,6 +141,7 @@ func (g *Gateway) ServeTerminal(response http.ResponseWriter, request *http.Requ
 		return nil
 	}
 	if frame.Role == "control" && !canControl {
+		g.logger.Warn("security audit", "audit_event", "authorization_denied", "outcome", "denied", "principal_id", owner, "agent_id", agentID, "request_id", requestID, "operation", "terminal_control_attach", "reason", "control_permission_required")
 		g.writeProtocolError(client, "forbidden_role", "control permission is required", requestID, false)
 		return nil
 	}
@@ -226,6 +227,8 @@ func (g *Gateway) proxy(parent context.Context, client, upstream *websocket.Conn
 			if frameType == "takeover" {
 				if canControl {
 					takeoverPending.Add(1)
+				} else {
+					g.logger.Warn("security audit", "audit_event", "authorization_denied", "outcome", "denied", "principal_id", owner, "agent_id", agentID, "request_id", requestID, "operation", "terminal_takeover", "reason", "control_permission_required")
 				}
 			}
 			writeContext, cancelWrite := context.WithTimeout(ctx, g.limits.WriteTimeout)

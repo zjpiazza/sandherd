@@ -31,8 +31,7 @@ spec:
           args:
             - --listen=:8080
             - --namespace=sandherd-system
-            - --owner-id=homelab
-            - --auth-token-file=/var/run/secrets/sandherd/api-token
+            - --auth-principals-file=/var/run/secrets/sandherd/principals.json
             - --capability-private-key-file=/var/run/secrets/sandherd/capability-private-key.pem
             - --sandbox-router-url=http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080
             - --sandbox-router-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
@@ -70,10 +69,10 @@ spec:
           projected:
             sources:
               - secret:
-                  name: sandherd-api-token
+                  name: sandherd-api-principals
                   items:
-                    - key: token
-                      path: api-token
+                    - key: principals.json
+                      path: principals.json
               - secret:
                   name: sandherd-runner-capability-signing-key
                   items:

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "principals": [
+    {
+      "id": "replace-with-your-stable-user-id",
+      "token": "replace-with-at-least-32-random-characters",
+      "permissions": ["control"],
+      "secretProfiles": ["personal"]
+    },
+    {
+      "id": "replace-with-an-observer-id",
+      "token": "replace-with-a-different-32-character-token",
+      "permissions": ["observe"]
+    }
+  ]
+}
