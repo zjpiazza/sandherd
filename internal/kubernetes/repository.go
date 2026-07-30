@@ -57,6 +57,14 @@ type Repository struct {
 	createMu  sync.Mutex
 }
 
+// RunnerTarget is an internal routing decision. It must never be serialized by
+// the public API because it contains Kubernetes resource identity.
+type RunnerTarget struct {
+	AgentID     string
+	SandboxName string
+	Namespace   string
+}
+
 func NewRepository(client dynamic.Interface, namespace string) *Repository {
 	return &Repository{client: client, namespace: namespace}
 }
@@ -143,6 +151,34 @@ func (r *Repository) Get(ctx context.Context, owner, id string) (lifecycle.Agent
 		return lifecycle.Agent{}, lifecycle.NewError(http.StatusNotFound, "agent_not_found", "agent was not found")
 	}
 	return agent, nil
+}
+
+func (r *Repository) ResolveRunner(ctx context.Context, owner, id string) (RunnerTarget, error) {
+	agent, err := r.Get(ctx, owner, id)
+	if err != nil {
+		return RunnerTarget{}, err
+	}
+	if agent.Status.State != lifecycle.StateRunning {
+		result := lifecycle.NewError(http.StatusConflict, "agent_not_running", "the agent is not running")
+		result.Retryable = agent.Status.State == lifecycle.StateProvisioning || agent.Status.State == lifecycle.StateStarting
+		return RunnerTarget{}, result
+	}
+	claim, err := r.client.Resource(SandboxClaimGVR).Namespace(r.namespace).Get(ctx, claimName(id), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		result := lifecycle.NewError(http.StatusConflict, "agent_not_running", "the agent runner is not available")
+		result.Retryable = true
+		return RunnerTarget{}, result
+	}
+	if err != nil {
+		return RunnerTarget{}, mapKubernetesError(err)
+	}
+	sandboxName, _, _ := unstructured.NestedString(claim.Object, "status", "sandbox", "name")
+	if sandboxName == "" {
+		result := lifecycle.NewError(http.StatusConflict, "agent_not_running", "the agent runner is not available")
+		result.Retryable = true
+		return RunnerTarget{}, result
+	}
+	return RunnerTarget{AgentID: agent.ID, SandboxName: sandboxName, Namespace: r.namespace}, nil
 }
 
 func (r *Repository) GetAny(ctx context.Context, id string) (lifecycle.Agent, error) {

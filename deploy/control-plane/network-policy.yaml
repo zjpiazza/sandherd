@@ -41,3 +41,13 @@ spec:
           port: 443
         - protocol: TCP
           port: 6443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-sandbox-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sandbox-router
+      ports:
+        - protocol: TCP
+          port: 8080

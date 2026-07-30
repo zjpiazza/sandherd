@@ -4,8 +4,8 @@ The runner owns exactly one agent process and its pseudo-terminal. Client
 attachments are intentionally disposable: closing every terminal connection
 does not signal, stop, or otherwise change the process.
 
-The runner API is internal to an Agent Sandbox. A future terminal gateway is its
-expected caller; end-user clients use the public Sandherd API instead.
+The runner API is internal to an Agent Sandbox. The terminal gateway is its
+production caller; end-user clients use the public Sandherd API instead.
 
 ## Starting a runner
 
@@ -36,6 +36,13 @@ An optional `--observe-token-file` creates a credential that can read metadata
 and terminal output but cannot acquire control, take over, send input, resize,
 signal, or stop the process. Tokens are read only from files and are never
 written to logs.
+
+For the production gateway path, mount the control plane's Ed25519 public key
+and use `--capability-public-key-file`. The gateway sends a 30-second signed
+capability in `X-Sandherd-Capability`; the runner verifies its Agent ID, role,
+request ID, signature, and expiry. `--auth-token-file=` disables the static
+token when capabilities are the only authentication method. A runner may accept
+both mechanisms during migration.
 
 ## Internal API
 
@@ -82,6 +89,6 @@ scratch filesystem. Agent Sandbox workloads must also set
 refuses to start if the standard Kubernetes service-account token path exists.
 
 The runner API must remain cluster-internal and be restricted to the gateway by
-network policy. The bearer token authenticates that hop; it is not public user
-authentication. Logs contain process IDs, attachment IDs, state changes, and
-errors, but never terminal payloads or bearer tokens.
+network policy. The scoped capability authenticates that hop; it is not public
+user authentication. Logs contain process IDs, attachment IDs, state changes,
+request and trace IDs, and errors, but never terminal payloads or credentials.

@@ -384,7 +384,23 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/InvalidStateTransition'
+          description: The Agent does not currently have an attachable runner
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                starting:
+                  value:
+                    error:
+                      code: agent_not_running
+                      message: The agent is not running.
+                      requestId: 019c1234-1234-7123-8123-123456789abc
+                      retryable: true
+                      details: {}
         '429':
           $ref: '#/components/responses/RateLimited'
         '500':

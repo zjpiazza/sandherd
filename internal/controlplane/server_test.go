@@ -28,6 +28,22 @@ type recordingEnqueuer struct {
 	ids []string
 }
 
+type recordingTerminalGateway struct {
+	called     bool
+	canControl bool
+}
+
+func (g *recordingTerminalGateway) ServeTerminal(response http.ResponseWriter, _ *http.Request, _, _, _ string, canControl bool) error {
+	g.called = true
+	g.canControl = canControl
+	response.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (g *recordingTerminalGateway) Metrics(response http.ResponseWriter, _ *http.Request) {
+	response.WriteHeader(http.StatusOK)
+}
+
 func (e *recordingEnqueuer) Enqueue(id string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -43,7 +59,7 @@ func testAPI(t *testing.T) (*cluster.Repository, *recordingEnqueuer, *lifecycle.
 	repository := cluster.NewRepository(client, "sandherd-system")
 	enqueuer := &recordingEnqueuer{}
 	events := lifecycle.NewEventBus(32)
-	server := NewServer(repository, enqueuer, events, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte(apiToken), "owner", func() bool { return true })
+	server := NewServer(repository, enqueuer, events, slog.New(slog.NewTextHandler(io.Discard, nil)), []byte(apiToken), nil, "owner", func() bool { return true }, nil)
 	httpServer := httptest.NewServer(server.Handler())
 	t.Cleanup(httpServer.Close)
 	return repository, enqueuer, events, httpServer
@@ -158,6 +174,37 @@ func TestLifecycleAPIValidationFilteringAndErrors(t *testing.T) {
 	}
 	badLimit := apiRequest(t, http.MethodGet, httpServer.URL+"/v1alpha1/agents?limit=999", "", "", "")
 	assertAPIError(t, badLimit, http.StatusBadRequest, "invalid_limit")
+}
+
+func TestObserveCredentialIsReadOnlyAndReachesTerminalGateway(t *testing.T) {
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+		cluster.AgentGVR: "AgentList", cluster.SandboxClaimGVR: "SandboxClaimList", cluster.SandboxGVR: "SandboxList",
+		cluster.PodGVR: "PodList", cluster.PVCGVR: "PersistentVolumeClaimList",
+	})
+	repository := cluster.NewRepository(client, "sandherd-system")
+	terminal := &recordingTerminalGateway{}
+	server := NewServer(repository, &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewTextHandler(io.Discard, nil)), []byte(apiToken), []byte("observe-api-token-for-tests"), "owner", func() bool { return true }, terminal)
+	httpServer := httptest.NewServer(server.Handler())
+	defer httpServer.Close()
+
+	request, _ := http.NewRequest(http.MethodGet, httpServer.URL+"/v1alpha1/agents/019c09f2-34c1-7ee0-9c66-d52919d67380/terminal", nil)
+	request.Header.Set("Authorization", "Bearer observe-api-token-for-tests")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent || !terminal.called || terminal.canControl {
+		t.Fatalf("terminal status=%d called=%v control=%v", response.StatusCode, terminal.called, terminal.canControl)
+	}
+	create, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/v1alpha1/agents", strings.NewReader(createPayload("read-only")))
+	create.Header.Set("Authorization", "Bearer observe-api-token-for-tests")
+	create.Header.Set("Idempotency-Key", "read-only")
+	response, err = http.DefaultClient.Do(create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAPIError(t, response, http.StatusForbidden, "forbidden_role")
 }
 
 func TestLifecycleEventSSEReplayAndExpiredCursor(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 )
 
 type Metadata struct {
@@ -29,6 +30,36 @@ type Metadata struct {
 type staticAuthenticator struct {
 	controlToken []byte
 	observeToken []byte
+}
+
+type authenticator interface {
+	authenticate(*http.Request) (Permissions, bool)
+}
+
+type capabilityAuthenticator struct {
+	verifier *internalauth.Verifier
+	agentID  string
+}
+
+func (a capabilityAuthenticator) authenticate(request *http.Request) (Permissions, bool) {
+	claims, err := a.verifier.Verify(request.Header.Get(internalauth.CapabilityHeader), a.agentID)
+	if err != nil {
+		return Permissions{}, false
+	}
+	permissions := Permissions{Observe: true, TerminalOnly: true, RequestID: claims.RequestID}
+	permissions.Control = claims.Role == "control"
+	return permissions, true
+}
+
+type multipleAuthenticators []authenticator
+
+func (a multipleAuthenticators) authenticate(request *http.Request) (Permissions, bool) {
+	for _, candidate := range a {
+		if permissions, ok := candidate.authenticate(request); ok {
+			return permissions, true
+		}
+	}
+	return Permissions{}, false
 }
 
 func (a staticAuthenticator) authenticate(request *http.Request) (Permissions, bool) {
@@ -53,7 +84,7 @@ func constantTimeEqual(left, right []byte) bool {
 type server struct {
 	hub           *hub
 	process       *agentProcess
-	authenticator staticAuthenticator
+	authenticator authenticator
 	logger        *slog.Logger
 	stopGrace     time.Duration
 	attachTimeout time.Duration
@@ -97,12 +128,16 @@ func (s *server) handleReadiness(response http.ResponseWriter, _ *http.Request) 
 	writeJSON(response, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-func (s *server) handleMetadata(response http.ResponseWriter, _ *http.Request, _ Permissions) {
+func (s *server) handleMetadata(response http.ResponseWriter, _ *http.Request, permissions Permissions) {
+	if permissions.TerminalOnly {
+		writeHTTPError(response, http.StatusForbidden, "forbidden_scope", "the credential is scoped to terminal streaming")
+		return
+	}
 	writeJSON(response, http.StatusOK, s.hub.metadata())
 }
 
 func (s *server) handleStop(response http.ResponseWriter, _ *http.Request, permissions Permissions) {
-	if !permissions.Control {
+	if !permissions.Control || permissions.TerminalOnly {
 		writeHTTPError(response, http.StatusForbidden, "forbidden_role", "control permission is required")
 		return
 	}
@@ -111,7 +146,7 @@ func (s *server) handleStop(response http.ResponseWriter, _ *http.Request, permi
 }
 
 func (s *server) handleSignal(response http.ResponseWriter, request *http.Request, permissions Permissions) {
-	if !permissions.Control {
+	if !permissions.Control || permissions.TerminalOnly {
 		writeHTTPError(response, http.StatusForbidden, "forbidden_role", "control permission is required")
 		return
 	}
@@ -150,7 +185,10 @@ func (s *server) handleTerminal(response http.ResponseWriter, request *http.Requ
 	defer connection.CloseNow()
 	connection.SetReadLimit(1024 * 1024)
 
-	requestID := newID()
+	requestID := permissions.RequestID
+	if requestID == "" {
+		requestID = newID()
+	}
 	attachContext, cancelAttach := context.WithTimeout(request.Context(), s.attachTimeout)
 	messageType, payload, err := connection.Read(attachContext)
 	cancelAttach()
@@ -179,7 +217,7 @@ func (s *server) handleTerminal(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	defer s.hub.detach(subscription)
-	s.logger.Info("terminal attached", "attachment_id", subscription.id, "role", subscription.role)
+	s.logger.Info("terminal attached", "attachment_id", subscription.id, "role", subscription.role, "request_id", requestID, "traceparent", request.Header.Get("traceparent"))
 
 	connectionContext, cancelConnection := context.WithCancel(request.Context())
 	defer cancelConnection()

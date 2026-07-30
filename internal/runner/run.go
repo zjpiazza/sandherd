@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 	"github.com/zjpiazza/sandherd/internal/buildinfo"
 )
 
@@ -25,6 +26,7 @@ type config struct {
 	listenAddress       string
 	authTokenFile       string
 	observeTokenFile    string
+	capabilityPublicKey string
 	workingDirectory    string
 	replayBytes         int
 	replayFrames        int
@@ -63,6 +65,7 @@ func parseConfig(args []string, stderr io.Writer) (config, bool, error) {
 	flags.StringVar(&result.listenAddress, "listen", ":8080", "internal API listen address")
 	flags.StringVar(&result.authTokenFile, "auth-token-file", "/var/run/secrets/sandherd/token", "file containing the control bearer token")
 	flags.StringVar(&result.observeTokenFile, "observe-token-file", "", "optional file containing an observe-only bearer token")
+	flags.StringVar(&result.capabilityPublicKey, "capability-public-key-file", "", "optional Ed25519 public key for scoped gateway capabilities")
 	flags.StringVar(&result.workingDirectory, "working-directory", ".", "agent process working directory")
 	flags.IntVar(&result.replayBytes, "replay-bytes", 4*1024*1024, "maximum retained terminal output bytes")
 	flags.IntVar(&result.replayFrames, "replay-frames", 4096, "maximum retained terminal output frames")
@@ -98,6 +101,14 @@ func parseConfig(args []string, stderr io.Writer) (config, bool, error) {
 		flags.Usage()
 		return config{}, false, fmt.Errorf("missing agent command")
 	}
+	if result.authTokenFile == "" && result.capabilityPublicKey == "" {
+		fmt.Fprintln(stderr, "runner: --auth-token-file or --capability-public-key-file is required")
+		return config{}, false, fmt.Errorf("missing authentication method")
+	}
+	if result.authTokenFile == "" && result.observeTokenFile != "" {
+		fmt.Fprintln(stderr, "runner: --observe-token-file requires --auth-token-file")
+		return config{}, false, fmt.Errorf("observe token without static control token")
+	}
 	if *columns == 0 || *columns > 1000 || *rows == 0 || *rows > 1000 {
 		fmt.Fprintln(stderr, "runner: columns and rows must be between 1 and 1000")
 		return config{}, false, fmt.Errorf("invalid terminal size")
@@ -120,9 +131,14 @@ func execute(configuration config, stderr io.Writer) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect Kubernetes service-account token: %w", err)
 	}
-	controlToken, err := readToken(configuration.authTokenFile)
-	if err != nil {
-		return fmt.Errorf("read control token: %w", err)
+	var authenticators multipleAuthenticators
+	var controlToken []byte
+	var err error
+	if configuration.authTokenFile != "" {
+		controlToken, err = readToken(configuration.authTokenFile)
+		if err != nil {
+			return fmt.Errorf("read control token: %w", err)
+		}
 	}
 	var observeToken []byte
 	if configuration.observeTokenFile != "" {
@@ -133,6 +149,24 @@ func execute(configuration config, stderr io.Writer) error {
 		if constantTimeEqual(controlToken, observeToken) {
 			return fmt.Errorf("control and observe tokens must differ")
 		}
+	}
+	if len(controlToken) > 0 {
+		authenticators = append(authenticators, staticAuthenticator{controlToken: controlToken, observeToken: observeToken})
+	}
+	if configuration.capabilityPublicKey != "" {
+		contents, readErr := os.ReadFile(filepath.Clean(configuration.capabilityPublicKey))
+		if readErr != nil {
+			return fmt.Errorf("read capability public key: %w", readErr)
+		}
+		publicKey, parseErr := internalauth.ParsePublicKeyPEM(contents)
+		if parseErr != nil {
+			return fmt.Errorf("parse capability public key: %w", parseErr)
+		}
+		verifier, verifyErr := internalauth.NewVerifier(publicKey)
+		if verifyErr != nil {
+			return verifyErr
+		}
+		authenticators = append(authenticators, capabilityAuthenticator{verifier: verifier, agentID: configuration.agentID})
 	}
 	if _, err := os.Stat(configuration.workingDirectory); err != nil {
 		return fmt.Errorf("inspect working directory: %w", err)
@@ -166,7 +200,7 @@ func execute(configuration config, stderr io.Writer) error {
 	api := &server{
 		hub:           hub,
 		process:       process,
-		authenticator: staticAuthenticator{controlToken: controlToken, observeToken: observeToken},
+		authenticator: authenticators,
 		logger:        logger,
 		stopGrace:     configuration.stopGrace,
 		attachTimeout: configuration.attachTimeout,
