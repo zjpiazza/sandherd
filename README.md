@@ -99,11 +99,13 @@ The control plane manages durable agent lifecycle through a REST API. Interactiv
 - [REST lifecycle API](api/openapi.yaml)
 - [Terminal attachment protocol](api/terminal.md)
 - [In-sandbox runner protocol and operations](docs/runner.md)
+- [Agent adapter operator and contributor guide](docs/adapters.md)
 - [Durable workspaces and repository bootstrap](docs/workspaces.md)
 - [Lifecycle control plane](docs/control-plane.md)
 - [Security model and operations](docs/security.md)
 - [Herdr integration](docs/herdr-integration.md)
 - [Resource and API model](docs/adr/0001-resource-and-api-model.md)
+- [Agent adapters and runtime generations](docs/adr/0002-agent-adapters-and-runtime-generations.md)
 - [Agent Sandbox cluster foundation](docs/platform/agent-sandbox.md)
 
 ### Built With

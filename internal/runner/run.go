@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -37,6 +39,7 @@ type config struct {
 	writeTimeout        time.Duration
 	initialTerminalSize TerminalSize
 	command             []string
+	healthCheck         []string
 }
 
 // Run parses runner flags, owns one agent process, and serves its internal API.
@@ -91,15 +94,47 @@ func parseConfig(args []string, stderr io.Writer) (config, bool, error) {
 		return config{}, true, nil
 	}
 	result.command = flags.Args()
+	if len(result.command) == 0 && os.Getenv("SANDHERD_AGENT_COMMAND_JSON") != "" {
+		if err := json.Unmarshal([]byte(os.Getenv("SANDHERD_AGENT_COMMAND_JSON")), &result.command); err != nil {
+			fmt.Fprintln(stderr, "runner: SANDHERD_AGENT_COMMAND_JSON must be a JSON command array")
+			return config{}, false, fmt.Errorf("invalid agent command")
+		}
+	}
+	if os.Getenv("SANDHERD_AGENT_HEALTH_CHECK_JSON") != "" {
+		if err := json.Unmarshal([]byte(os.Getenv("SANDHERD_AGENT_HEALTH_CHECK_JSON")), &result.healthCheck); err != nil {
+			fmt.Fprintln(stderr, "runner: SANDHERD_AGENT_HEALTH_CHECK_JSON must be a JSON command array")
+			return config{}, false, fmt.Errorf("invalid adapter health check")
+		}
+	}
 	if result.agentID == "" || !looksLikeUUID(result.agentID) {
 		fmt.Fprintln(stderr, "runner: --agent-id must be a UUID")
 		flags.Usage()
 		return config{}, false, fmt.Errorf("invalid agent ID")
 	}
 	if len(result.command) == 0 {
-		fmt.Fprintln(stderr, "runner: an agent command is required after --")
+		fmt.Fprintln(stderr, "runner: an agent command is required after -- or through SANDHERD_AGENT_COMMAND_JSON")
 		flags.Usage()
 		return config{}, false, fmt.Errorf("missing agent command")
+	}
+	if len(result.command) > 64 || !filepath.IsAbs(result.command[0]) {
+		fmt.Fprintln(stderr, "runner: the agent command must contain an absolute executable and at most 64 arguments")
+		return config{}, false, fmt.Errorf("invalid agent command")
+	}
+	for _, argument := range result.command {
+		if len(argument) > 4096 || strings.IndexByte(argument, 0) >= 0 {
+			fmt.Fprintln(stderr, "runner: the agent command contains an invalid argument")
+			return config{}, false, fmt.Errorf("invalid agent command")
+		}
+	}
+	if len(result.healthCheck) == 0 || len(result.healthCheck) > 64 || !filepath.IsAbs(result.healthCheck[0]) {
+		fmt.Fprintln(stderr, "runner: the adapter health check must contain an absolute executable and at most 64 arguments")
+		return config{}, false, fmt.Errorf("invalid adapter health check")
+	}
+	for _, argument := range result.healthCheck {
+		if len(argument) > 4096 || strings.IndexByte(argument, 0) >= 0 {
+			fmt.Fprintln(stderr, "runner: the adapter health check contains an invalid argument")
+			return config{}, false, fmt.Errorf("invalid adapter health check")
+		}
 	}
 	if result.authTokenFile == "" && result.capabilityPublicKey == "" {
 		fmt.Fprintln(stderr, "runner: --auth-token-file or --capability-public-key-file is required")
@@ -171,6 +206,9 @@ func execute(configuration config, stderr io.Writer) error {
 	if _, err := os.Stat(configuration.workingDirectory); err != nil {
 		return fmt.Errorf("inspect working directory: %w", err)
 	}
+	if err := runAdapterHealthCheck(configuration.healthCheck, configuration.workingDirectory, os.Environ()); err != nil {
+		return err
+	}
 
 	listener, err := net.Listen("tcp", configuration.listenAddress)
 	if err != nil {
@@ -234,6 +272,20 @@ func execute(configuration config, stderr io.Writer) error {
 	defer cancel()
 	if err := httpServer.Shutdown(serverShutdownContext); err != nil {
 		return fmt.Errorf("shut down runner API: %w", err)
+	}
+	return nil
+}
+
+func runAdapterHealthCheck(command []string, workingDirectory string, environment []string) error {
+	checkContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	check := exec.CommandContext(checkContext, command[0], command[1:]...)
+	check.Dir = workingDirectory
+	check.Env = environment
+	check.Stdout = io.Discard
+	check.Stderr = io.Discard
+	if err := check.Run(); err != nil {
+		return fmt.Errorf("adapter health check failed")
 	}
 	return nil
 }

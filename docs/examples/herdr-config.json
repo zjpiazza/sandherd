@@ -3,7 +3,7 @@
   "tokenFile": "/home/you/.config/sandherd/api-token",
   "create": {
     "spec": {
-      "kind": "codex",
+      "kind": "shell",
       "sandboxProfile": "standard",
       "resources": {
         "cpu": "2",

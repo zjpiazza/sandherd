@@ -11,6 +11,8 @@ The accepted [resource-model ADR](adr/0001-resource-and-api-model.md) is
 implemented with a namespaced `agents.sandherd.dev` CRD. Its spec holds the
 validated agent request and desired lifecycle state. Its status holds the stable
 public state, observed generation, safe reason, and transition timestamps.
+The [adapter ADR](adr/0002-agent-adapters-and-runtime-generations.md) separates
+that stable Agent and workspace from replaceable runtime generations.
 
 Each Agent ID deterministically maps to one claim name. Reconciliation is level
 based, so restarting the control plane lists all Agents and adopts existing
@@ -21,7 +23,8 @@ in `failed` after the retry budget is exhausted.
 
 The running path waits for all of the following before publishing `running`:
 
-1. an approved public sandbox profile maps to a configured warm pool;
+1. the requested adapter, sandbox profile, and credential profile resolve to an
+   installed runtime binding;
 2. the deterministic `SandboxClaim` exists and has an assigned Sandbox;
 3. the claim reports `Ready`;
 4. the runner Pod reports `Ready`.
@@ -41,6 +44,8 @@ The service implements:
 - `GET` and `DELETE /v1alpha1/agents/{id}`
 - `POST /v1alpha1/agents/{id}:stop`
 - `POST /v1alpha1/agents/{id}:resume`
+- `POST /v1alpha1/agents/{id}:change-adapter`
+- `GET /v1alpha1/adapters`
 - `GET /v1alpha1/events` as server-sent events
 - `GET /v1alpha1/agents/{id}/terminal` as a reconnectable WebSocket
 - `GET /metrics` for content-free gateway telemetry
@@ -67,9 +72,9 @@ go run ./cmd/control-plane \
   --context admin@homelab \
   --namespace sandherd-system \
   --auth-principals-file /run/sandherd/principals.json \
+  --adapter-config-file /etc/sandherd/adapters.json \
   --capability-private-key-file /run/sandherd/capability-private-key.pem \
-  --sandbox-router-token-file /var/run/secrets/kubernetes.io/serviceaccount/token \
-  --sandbox-profile standard=sandherd-standard
+  --sandbox-router-token-file /var/run/secrets/kubernetes.io/serviceaccount/token
 ```
 
 The API never accepts a caller-supplied owner header. See the complete
@@ -100,14 +105,18 @@ kubectl --context admin@homelab --namespace sandherd-system \
 kubectl --context admin@homelab apply --kustomize deploy/control-plane-homelab
 ```
 
-The control plane separately maps public sandbox, storage, and repository
-secret profiles to administrator-approved Kubernetes resources:
+The adapter registry maps public adapter/sandbox/credential combinations to
+reviewed warm pools and commands. The control plane separately maps storage and
+repository secret profiles to administrator-approved Kubernetes resources:
 
 ```text
---sandbox-profile=standard=sandherd-standard
+--adapter-config-file=/etc/sandherd/adapters.json
 --storage-profile=default=rook-ceph-block
 --secret-profile=personal=sandherd-standard-https-private
 ```
+
+See the [adapter operator and contributor guide](adapters.md) for the registry
+schema, capability discovery, upgrades, and safe runtime replacement.
 
 The portable deployment uses the cluster's default StorageClass. The homelab
 overlay maps `default` to `rook-ceph-block`. See the [workspace guide](workspaces.md)
@@ -129,6 +138,8 @@ installed Tailscale operator; sandboxes do not join the tailnet.
 
 - API process restarts do not change Agent desired state or replace claims.
 - Missing claims for live Agents are recreated with the same deterministic name.
+- Adapter or adapter-version changes drain the old Sandbox and create a new
+  runtime generation against the same workspace PVC.
 - Failed runner Pods and terminal provisioning failures become stable `failed`
   states with safe reasons.
 - Deletion stays observable as `deleting` until claim cleanup completes.

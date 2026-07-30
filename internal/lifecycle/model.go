@@ -14,14 +14,15 @@ import (
 type State string
 
 const (
-	StateRequested    State = "requested"
-	StateProvisioning State = "provisioning"
-	StateStarting     State = "starting"
-	StateRunning      State = "running"
-	StateStopping     State = "stopping"
-	StateStopped      State = "stopped"
-	StateFailed       State = "failed"
-	StateDeleting     State = "deleting"
+	StateRequested     State = "requested"
+	StateProvisioning  State = "provisioning"
+	StateStarting      State = "starting"
+	StateRunning       State = "running"
+	StateReconfiguring State = "reconfiguring"
+	StateStopping      State = "stopping"
+	StateStopped       State = "stopped"
+	StateFailed        State = "failed"
+	StateDeleting      State = "deleting"
 )
 
 type DesiredState string
@@ -53,42 +54,56 @@ type LifecycleSpec struct {
 }
 
 type AgentSpec struct {
-	Kind           string          `json:"kind"`
-	SandboxProfile string          `json:"sandboxProfile"`
-	Repository     *RepositorySpec `json:"repository,omitempty"`
-	Resources      ResourceSpec    `json:"resources"`
-	Workspace      WorkspaceSpec   `json:"workspace"`
-	SecretProfile  string          `json:"secretProfile,omitempty"`
-	Lifecycle      LifecycleSpec   `json:"lifecycle"`
+	Kind              string          `json:"kind"`
+	SandboxProfile    string          `json:"sandboxProfile"`
+	CredentialProfile string          `json:"credentialProfile,omitempty"`
+	Repository        *RepositorySpec `json:"repository,omitempty"`
+	Resources         ResourceSpec    `json:"resources"`
+	Workspace         WorkspaceSpec   `json:"workspace"`
+	SecretProfile     string          `json:"secretProfile,omitempty"`
+	Lifecycle         LifecycleSpec   `json:"lifecycle"`
+}
+
+type RuntimeStatus struct {
+	Generation     int64  `json:"generation"`
+	Kind           string `json:"kind"`
+	AdapterVersion string `json:"adapterVersion"`
 }
 
 type AgentStatus struct {
-	State              State      `json:"state"`
-	ObservedGeneration int64      `json:"observedGeneration"`
-	Reason             string     `json:"reason,omitempty"`
-	Message            string     `json:"message,omitempty"`
-	ReadyAt            *time.Time `json:"readyAt,omitempty"`
-	StoppedAt          *time.Time `json:"stoppedAt,omitempty"`
-	LastTransitionAt   *time.Time `json:"lastTransitionAt,omitempty"`
+	State              State          `json:"state"`
+	ObservedGeneration int64          `json:"observedGeneration"`
+	Reason             string         `json:"reason,omitempty"`
+	Message            string         `json:"message,omitempty"`
+	ReadyAt            *time.Time     `json:"readyAt,omitempty"`
+	StoppedAt          *time.Time     `json:"stoppedAt,omitempty"`
+	LastTransitionAt   *time.Time     `json:"lastTransitionAt,omitempty"`
+	Runtime            *RuntimeStatus `json:"runtime,omitempty"`
 }
 
 type Agent struct {
-	APIVersion      string       `json:"apiVersion"`
-	ID              string       `json:"id"`
-	Name            string       `json:"name"`
-	Owner           string       `json:"owner"`
-	Generation      int64        `json:"generation"`
-	ResourceVersion string       `json:"-"`
-	Spec            AgentSpec    `json:"spec"`
-	Status          AgentStatus  `json:"status"`
-	DesiredState    DesiredState `json:"-"`
-	CreatedAt       time.Time    `json:"createdAt"`
-	UpdatedAt       time.Time    `json:"updatedAt"`
+	APIVersion        string       `json:"apiVersion"`
+	ID                string       `json:"id"`
+	Name              string       `json:"name"`
+	Owner             string       `json:"owner"`
+	Generation        int64        `json:"generation"`
+	RuntimeGeneration int64        `json:"runtimeGeneration"`
+	ResourceVersion   string       `json:"-"`
+	Spec              AgentSpec    `json:"spec"`
+	Status            AgentStatus  `json:"status"`
+	DesiredState      DesiredState `json:"-"`
+	CreatedAt         time.Time    `json:"createdAt"`
+	UpdatedAt         time.Time    `json:"updatedAt"`
 }
 
 type CreateRequest struct {
 	Name string    `json:"name"`
 	Spec AgentSpec `json:"spec"`
+}
+
+type ChangeAdapterRequest struct {
+	Kind              string `json:"kind"`
+	CredentialProfile string `json:"credentialProfile,omitempty"`
 }
 
 type AgentList struct {
@@ -121,6 +136,9 @@ func (r CreateRequest) Validate() error {
 	}
 	if len(r.Spec.SandboxProfile) < 1 || len(r.Spec.SandboxProfile) > 64 || !profilePattern.MatchString(r.Spec.SandboxProfile) {
 		return fmt.Errorf("spec.sandboxProfile is invalid")
+	}
+	if r.Spec.CredentialProfile != "" && (len(r.Spec.CredentialProfile) > 64 || !profilePattern.MatchString(r.Spec.CredentialProfile)) {
+		return fmt.Errorf("spec.credentialProfile is invalid")
 	}
 	if r.Spec.Resources.CPU == "" || r.Spec.Resources.Memory == "" {
 		return fmt.Errorf("spec.resources.cpu and memory are required")
@@ -163,6 +181,16 @@ func (r CreateRequest) Validate() error {
 	return nil
 }
 
+func (r ChangeAdapterRequest) Validate() error {
+	if len(r.Kind) < 1 || len(r.Kind) > 64 || !profilePattern.MatchString(r.Kind) {
+		return fmt.Errorf("kind is invalid")
+	}
+	if r.CredentialProfile != "" && (len(r.CredentialProfile) > 64 || !profilePattern.MatchString(r.CredentialProfile)) {
+		return fmt.Errorf("credentialProfile is invalid")
+	}
+	return nil
+}
+
 func (r *CreateRequest) ApplyDefaults() {
 	if r.Spec.Repository != nil && r.Spec.Repository.Revision == "" {
 		r.Spec.Repository.Revision = "HEAD"
@@ -182,6 +210,15 @@ func CanStop(state State) bool {
 
 func CanResume(state State) bool {
 	return state == StateStopped || state == StateProvisioning || state == StateStarting || state == StateRunning
+}
+
+func CanChangeAdapter(state State) bool {
+	switch state {
+	case StateRequested, StateProvisioning, StateStarting, StateRunning, StateStopped, StateFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewID returns a time-ordered UUIDv7 without an external identity dependency.

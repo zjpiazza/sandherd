@@ -21,6 +21,7 @@ import (
 	"github.com/zjpiazza/sandherd/internal/gateway"
 	cluster "github.com/zjpiazza/sandherd/internal/kubernetes"
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	"github.com/zjpiazza/sandherd/internal/runtimeadapter"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -51,11 +52,11 @@ type runConfig struct {
 	kubeconfig           string
 	context              string
 	principalsFile       string
+	adaptersFile         string
 	capabilityPrivateKey string
 	routerURL            string
 	routerTokenFile      string
 	runnerPort           int
-	profiles             profileMap
 	storageProfiles      profileMap
 	secretProfiles       profileMap
 }
@@ -78,7 +79,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 	configuration := runConfig{
-		profiles:        profileMap{"standard": "sandherd-standard"},
 		storageProfiles: profileMap{"default": ""}, secretProfiles: profileMap{},
 	}
 	flags := flag.NewFlagSet("control-plane", flag.ContinueOnError)
@@ -89,11 +89,11 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 	flags.StringVar(&configuration.kubeconfig, "kubeconfig", "", "kubeconfig path (defaults to in-cluster or standard loading rules)")
 	flags.StringVar(&configuration.context, "context", "", "kubeconfig context override")
 	flags.StringVar(&configuration.principalsFile, "auth-principals-file", "/var/run/secrets/sandherd/principals.json", "reloadable JSON file containing API principals and bearer credentials")
+	flags.StringVar(&configuration.adaptersFile, "adapter-config-file", "/etc/sandherd/adapters.json", "versioned JSON file containing installed agent adapters and runtime profiles")
 	flags.StringVar(&configuration.capabilityPrivateKey, "capability-private-key-file", "/var/run/secrets/sandherd/capability-private-key.pem", "Ed25519 key used to sign short-lived runner capabilities")
 	flags.StringVar(&configuration.routerURL, "sandbox-router-url", "http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080", "Agent Sandbox router URL")
 	flags.StringVar(&configuration.routerTokenFile, "sandbox-router-token-file", "/var/run/secrets/kubernetes.io/serviceaccount/token", "Kubernetes bearer token used with the sandbox router")
 	flags.IntVar(&configuration.runnerPort, "runner-port", 8080, "runner port inside each sandbox")
-	flags.Var(configuration.profiles, "sandbox-profile", "approved public-profile=warm-pool mapping (repeatable)")
 	flags.Var(configuration.storageProfiles, "storage-profile", "approved public-profile=storage-class mapping; use '-' for the cluster default (repeatable)")
 	flags.Var(configuration.secretProfiles, "secret-profile", "approved public-profile=credentialed-warm-pool mapping (repeatable)")
 	flags.Usage = func() {
@@ -118,13 +118,17 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 			configuration.storageProfiles[profile] = ""
 		}
 	}
-	if configuration.namespace == "" || configuration.principalsFile == "" || len(configuration.profiles) == 0 || len(configuration.storageProfiles) == 0 || configuration.capabilityPrivateKey == "" || configuration.routerURL == "" || configuration.routerTokenFile == "" || configuration.runnerPort < 1 || configuration.runnerPort > 65535 {
-		return runConfig{}, false, fmt.Errorf("namespace, gateway routing, and at least one sandbox profile are required")
+	if configuration.namespace == "" || configuration.principalsFile == "" || configuration.adaptersFile == "" || len(configuration.storageProfiles) == 0 || configuration.capabilityPrivateKey == "" || configuration.routerURL == "" || configuration.routerTokenFile == "" || configuration.runnerPort < 1 || configuration.runnerPort > 65535 {
+		return runConfig{}, false, fmt.Errorf("namespace, adapter configuration, storage, and gateway routing are required")
 	}
 	return configuration, false, nil
 }
 
 func execute(configuration runConfig, stderr io.Writer) error {
+	adapters, err := runtimeadapter.Load(configuration.adaptersFile)
+	if err != nil {
+		return fmt.Errorf("configure agent adapters: %w", err)
+	}
 	clientAuthenticator, err := internalauth.NewFileAuthenticator(configuration.principalsFile)
 	if err != nil {
 		return fmt.Errorf("configure API authentication: %w", err)
@@ -168,7 +172,7 @@ func execute(configuration runConfig, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configure terminal gateway: %w", err)
 	}
-	reconciler := cluster.NewReconciler(client, repository, configuration.namespace, configuration.profiles, events, logger)
+	reconciler := cluster.NewReconciler(client, repository, configuration.namespace, adapters, events, logger)
 	reconciler.ConfigureWorkspaceProfiles(configuration.storageProfiles, configuration.secretProfiles)
 	controller := cluster.NewController(client, repository, reconciler, configuration.namespace, logger)
 	var ready atomic.Bool
@@ -176,7 +180,7 @@ func execute(configuration runConfig, stderr io.Writer) error {
 		return fmt.Errorf("verify Agent API access: %w", err)
 	}
 	ready.Store(true)
-	api := NewServer(repository, controller, events, logger, clientAuthenticator, ready.Load, terminalGateway)
+	api := NewServer(repository, controller, events, logger, clientAuthenticator, ready.Load, terminalGateway, adapters)
 	httpServer := &http.Server{
 		Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second,
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),

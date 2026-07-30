@@ -116,7 +116,7 @@ spec:
         - name: runner
           image: sandherd/agent-runtime:dev
           imagePullPolicy: IfNotPresent
-          workingDir: /workspace
+          workingDir: /workspace/repository
           command:
             - /usr/local/bin/sandherd-runner
           args:
@@ -125,20 +125,22 @@ spec:
             - --auth-token-file=
             - --capability-public-key-file=/var/run/secrets/sandherd/capability-public-key.pem
             - --working-directory=/workspace/repository
-            - --
-            - /bin/bash
-            - --noprofile
-            - --norc
           env:
             - name: HOME
-              value: /workspace
+              value: /home/sandherd
+            - name: XDG_CONFIG_HOME
+              value: /home/sandherd/.config
+            - name: XDG_DATA_HOME
+              value: /home/sandherd/.local/share
+            - name: XDG_CACHE_HOME
+              value: /home/sandherd/.cache
           ports:
             - name: runner
               containerPort: 8080
               protocol: TCP
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: runner
             periodSeconds: 2
             timeoutSeconds: 1
@@ -166,7 +168,11 @@ spec:
               drop: [ALL]
           volumeMounts:
             - name: workspace
-              mountPath: /workspace
+              mountPath: /workspace/repository
+              subPath: repository
+            - name: workspace
+              mountPath: /home/sandherd
+              subPathExpr: .sandherd/adapters/$(SANDHERD_ADAPTER_ID)
             - name: temporary
               mountPath: /tmp
             - name: capability-public-key

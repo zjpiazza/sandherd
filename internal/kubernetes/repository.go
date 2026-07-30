@@ -35,13 +35,18 @@ var (
 )
 
 const (
-	ManagedLabel      = "sandherd.dev/managed"
-	AgentIDLabel      = "sandherd.dev/agent-id"
-	OwnerHashLabel    = "sandherd.dev/owner-hash"
-	idempotencyKey    = "sandherd.dev/idempotency-key"
-	idempotencyHash   = "sandherd.dev/idempotency-hash"
-	AgentFinalizer    = "sandherd.dev/sandbox-cleanup"
-	DefaultFieldOwner = "sandherd-control-plane"
+	ManagedLabel                = "sandherd.dev/managed"
+	AgentIDLabel                = "sandherd.dev/agent-id"
+	OwnerHashLabel              = "sandherd.dev/owner-hash"
+	StorageScopeLabel           = "sandherd.dev/storage-scope"
+	StorageScopeWorkspace       = "workspace"
+	RuntimeGenerationAnnotation = "sandherd.dev/runtime-generation"
+	AdapterIDAnnotation         = "sandherd.dev/adapter-id"
+	AdapterVersionAnnotation    = "sandherd.dev/adapter-version"
+	idempotencyKey              = "sandherd.dev/idempotency-key"
+	idempotencyHash             = "sandherd.dev/idempotency-hash"
+	AgentFinalizer              = "sandherd.dev/sandbox-cleanup"
+	DefaultFieldOwner           = "sandherd-control-plane"
 )
 
 type ListOptions struct {
@@ -115,11 +120,12 @@ func (r *Repository) Create(ctx context.Context, owner, key string, request life
 			"finalizers":  []any{AgentFinalizer},
 		},
 		"spec": map[string]any{
-			"id":           id,
-			"name":         request.Name,
-			"owner":        owner,
-			"desiredState": string(lifecycle.DesiredRunning),
-			"agent":        toMap(request.Spec),
+			"id":                id,
+			"name":              request.Name,
+			"owner":             owner,
+			"desiredState":      string(lifecycle.DesiredRunning),
+			"runtimeGeneration": int64(1),
+			"agent":             toMap(request.Spec),
 		},
 	}}
 	created, err := r.client.Resource(AgentGVR).Namespace(r.namespace).Create(ctx, object, metav1.CreateOptions{FieldManager: DefaultFieldOwner})
@@ -283,6 +289,58 @@ func (r *Repository) SetDesired(ctx context.Context, owner, id, ifMatch string, 
 	return agentFromObject(object)
 }
 
+func (r *Repository) ChangeAdapter(ctx context.Context, owner, id, ifMatch string, change lifecycle.ChangeAdapterRequest, transitional lifecycle.State) (lifecycle.Agent, bool, error) {
+	object, err := r.client.Resource(AgentGVR).Namespace(r.namespace).Get(ctx, resourceName(id), metav1.GetOptions{})
+	if err != nil {
+		return lifecycle.Agent{}, false, mapKubernetesError(err)
+	}
+	agent, err := agentFromObject(object)
+	if err != nil {
+		return lifecycle.Agent{}, false, err
+	}
+	if agent.Owner != owner {
+		return lifecycle.Agent{}, false, lifecycle.NewError(http.StatusNotFound, "agent_not_found", "agent was not found")
+	}
+	if ifMatch != "" && ifMatch != ETag(agent.ResourceVersion) {
+		return lifecycle.Agent{}, false, lifecycle.NewError(http.StatusPreconditionFailed, "precondition_failed", "the agent changed since it was read")
+	}
+	if agent.Spec.Kind == change.Kind && agent.Spec.CredentialProfile == change.CredentialProfile {
+		return agent, false, nil
+	}
+	if err := unstructured.SetNestedField(object.Object, change.Kind, "spec", "agent", "kind"); err != nil {
+		return lifecycle.Agent{}, false, err
+	}
+	if change.CredentialProfile == "" {
+		unstructured.RemoveNestedField(object.Object, "spec", "agent", "credentialProfile")
+	} else if err := unstructured.SetNestedField(object.Object, change.CredentialProfile, "spec", "agent", "credentialProfile"); err != nil {
+		return lifecycle.Agent{}, false, err
+	}
+	nextRuntimeGeneration := agent.RuntimeGeneration + 1
+	if nextRuntimeGeneration < 2 {
+		nextRuntimeGeneration = 2
+	}
+	if err := unstructured.SetNestedField(object.Object, nextRuntimeGeneration, "spec", "runtimeGeneration"); err != nil {
+		return lifecycle.Agent{}, false, err
+	}
+	object, err = r.client.Resource(AgentGVR).Namespace(r.namespace).Update(ctx, object, metav1.UpdateOptions{FieldManager: DefaultFieldOwner})
+	if err != nil {
+		return lifecycle.Agent{}, false, mapKubernetesError(err)
+	}
+	if transitional != lifecycle.StateStopped {
+		now := time.Now().UTC()
+		agent.Status.State = transitional
+		agent.Status.Reason = "adapter_change_requested"
+		agent.Status.Message = "the requested adapter runtime is being prepared"
+		agent.Status.LastTransitionAt = &now
+		object, err = r.updateStatusObject(ctx, object, agent.Status)
+		if err != nil {
+			return lifecycle.Agent{}, false, err
+		}
+	}
+	updated, err := agentFromObject(object)
+	return updated, true, err
+}
+
 func (r *Repository) SetStatus(ctx context.Context, id string, status lifecycle.AgentStatus) (lifecycle.Agent, error) {
 	object, err := r.client.Resource(AgentGVR).Namespace(r.namespace).Get(ctx, resourceName(id), metav1.GetOptions{})
 	if err != nil {
@@ -345,6 +403,10 @@ func agentFromObject(object *unstructured.Unstructured) (lifecycle.Agent, error)
 	result.Generation = object.GetGeneration()
 	if result.Generation == 0 {
 		result.Generation = 1
+	}
+	result.RuntimeGeneration, _, _ = unstructured.NestedInt64(object.Object, "spec", "runtimeGeneration")
+	if result.RuntimeGeneration == 0 {
+		result.RuntimeGeneration = 1
 	}
 	result.ResourceVersion = object.GetResourceVersion()
 	result.CreatedAt = object.GetCreationTimestamp().Time.UTC()

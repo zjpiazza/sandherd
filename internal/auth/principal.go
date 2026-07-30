@@ -31,19 +31,28 @@ const (
 )
 
 type Principal struct {
-	ID             string
-	permissions    map[Permission]struct{}
-	secretProfiles map[string]struct{}
+	ID                 string
+	permissions        map[Permission]struct{}
+	secretProfiles     map[string]struct{}
+	credentialProfiles map[string]struct{}
 }
 
 func NewPrincipal(id string, permissions []Permission, secretProfiles []string) (Principal, error) {
+	return NewPrincipalWithCredentialProfiles(id, permissions, secretProfiles, nil)
+}
+
+func NewPrincipalWithCredentialProfiles(id string, permissions []Permission, secretProfiles, credentialProfiles []string) (Principal, error) {
 	if !principalIDPattern.MatchString(id) {
 		return Principal{}, fmt.Errorf("principal ID is invalid")
 	}
 	if len(permissions) == 0 {
 		return Principal{}, fmt.Errorf("at least one principal permission is required")
 	}
-	result := Principal{ID: id, permissions: make(map[Permission]struct{}, len(permissions)), secretProfiles: make(map[string]struct{}, len(secretProfiles))}
+	result := Principal{
+		ID: id, permissions: make(map[Permission]struct{}, len(permissions)),
+		secretProfiles:     make(map[string]struct{}, len(secretProfiles)),
+		credentialProfiles: make(map[string]struct{}, len(credentialProfiles)),
+	}
 	for _, permission := range permissions {
 		if permission != PermissionObserve && permission != PermissionControl {
 			return Principal{}, fmt.Errorf("principal permission is invalid")
@@ -62,6 +71,15 @@ func NewPrincipal(id string, permissions []Permission, secretProfiles []string) 
 		}
 		result.secretProfiles[profile] = struct{}{}
 	}
+	for _, profile := range credentialProfiles {
+		if !profileNamePattern.MatchString(profile) {
+			return Principal{}, fmt.Errorf("principal credential profile is invalid")
+		}
+		if _, exists := result.credentialProfiles[profile]; exists {
+			return Principal{}, fmt.Errorf("principal credential profile is repeated")
+		}
+		result.credentialProfiles[profile] = struct{}{}
+	}
 	return result, nil
 }
 
@@ -78,6 +96,14 @@ func (p Principal) AllowsSecretProfile(profile string) bool {
 		return true
 	}
 	_, ok := p.secretProfiles[profile]
+	return ok
+}
+
+func (p Principal) AllowsCredentialProfile(profile string) bool {
+	if profile == "" {
+		return true
+	}
+	_, ok := p.credentialProfiles[profile]
 	return ok
 }
 
@@ -100,10 +126,11 @@ type principalFile struct {
 }
 
 type principalCredential struct {
-	ID             string   `json:"id"`
-	Token          string   `json:"token"`
-	Permissions    []string `json:"permissions"`
-	SecretProfiles []string `json:"secretProfiles,omitempty"`
+	ID                 string   `json:"id"`
+	Token              string   `json:"token"`
+	Permissions        []string `json:"permissions"`
+	SecretProfiles     []string `json:"secretProfiles,omitempty"`
+	CredentialProfiles []string `json:"credentialProfiles,omitempty"`
 }
 
 func NewFileAuthenticator(path string) (*FileAuthenticator, error) {
@@ -220,6 +247,16 @@ func (f principalFile) validate() error {
 			}
 			profileSet[profile] = struct{}{}
 		}
+		credentialProfileSet := make(map[string]struct{}, len(credential.CredentialProfiles))
+		for _, profile := range credential.CredentialProfiles {
+			if !profileNamePattern.MatchString(profile) {
+				return fmt.Errorf("principal %d has an invalid credential profile", index)
+			}
+			if _, exists := credentialProfileSet[profile]; exists {
+				return fmt.Errorf("principal %d repeats a credential profile", index)
+			}
+			credentialProfileSet[profile] = struct{}{}
+		}
 	}
 	return nil
 }
@@ -229,6 +266,6 @@ func (c principalCredential) principal() Principal {
 	for _, permission := range c.Permissions {
 		permissions = append(permissions, Permission(permission))
 	}
-	result, _ := NewPrincipal(c.ID, permissions, c.SecretProfiles)
+	result, _ := NewPrincipalWithCredentialProfiles(c.ID, permissions, c.SecretProfiles, c.CredentialProfiles)
 	return result
 }

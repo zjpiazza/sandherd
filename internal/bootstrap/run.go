@@ -36,6 +36,7 @@ func Run(arguments []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	showVersion := flags.Bool("version", false, "print version information and exit")
 	workspace := flags.String("workspace", envOrDefault("SANDHERD_WORKSPACE", "/workspace"), "durable workspace mount")
+	adapterID := flags.String("adapter-id", envOrDefault("SANDHERD_ADAPTER_ID", "shell"), "selected agent adapter ID")
 	repositoryURL := flags.String("repository-url", os.Getenv("SANDHERD_REPOSITORY_URL"), "HTTPS or SSH repository URL")
 	revision := flags.String("revision", envOrDefault("SANDHERD_REPOSITORY_REVISION", "HEAD"), "repository revision")
 	credentialFile := flags.String("credential-file", os.Getenv("SANDHERD_GIT_CREDENTIAL_FILE"), "HTTPS credential JSON file")
@@ -56,7 +57,7 @@ func Run(arguments []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	metadata, err := Execute(context.Background(), Options{
-		Workspace: *workspace, RepositoryURL: strings.TrimSpace(*repositoryURL), Revision: strings.TrimSpace(*revision),
+		Workspace: *workspace, AdapterID: strings.TrimSpace(*adapterID), RepositoryURL: strings.TrimSpace(*repositoryURL), Revision: strings.TrimSpace(*revision),
 		CredentialFile: *credentialFile, SSHKeyFile: *sshKeyFile, KnownHostsFile: *knownHostsFile,
 		GitBinary: *gitBinary, SSHBinary: *sshBinary, Timeout: *timeout,
 	})

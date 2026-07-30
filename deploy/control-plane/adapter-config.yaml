@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandherd-adapter-config
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-control-plane
+    app.kubernetes.io/part-of: sandherd
+data:
+  adapters.json: |
+    {
+      "version": 1,
+      "adapters": [
+        {
+          "id": "shell",
+          "displayName": "Development shell",
+          "version": "1",
+          "capabilities": ["interactive"],
+          "profiles": [
+            {
+              "sandboxProfile": "standard",
+              "credentialMode": "none",
+              "warmPool": "sandherd-standard",
+              "command": ["/bin/bash", "--noprofile", "--norc"],
+              "healthCheck": ["/bin/bash", "--version"]
+            }
+          ]
+        },
+        {
+          "id": "shell-minimal",
+          "displayName": "Development POSIX shell",
+          "version": "1",
+          "capabilities": ["interactive", "headless"],
+          "profiles": [
+            {
+              "sandboxProfile": "standard",
+              "credentialMode": "none",
+              "warmPool": "sandherd-standard",
+              "command": ["/bin/sh"],
+              "healthCheck": ["/bin/sh", "-c", "exit 0"]
+            }
+          ]
+        }
+      ]
+    }

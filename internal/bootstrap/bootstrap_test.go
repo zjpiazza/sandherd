@@ -143,6 +143,32 @@ func TestExecuteEmptyWorkspaceIsWritableAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestAdapterStateIsSeparatedAndPreserved(t *testing.T) {
+	workspace := t.TempDir()
+	if _, err := Execute(context.Background(), Options{Workspace: workspace, AdapterID: "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	shellState := filepath.Join(workspace, ".sandherd", "adapters", "shell")
+	if err := os.WriteFile(filepath.Join(shellState, "session"), []byte("preserved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Execute(context.Background(), Options{Workspace: workspace, AdapterID: "shell_minimal"}); err != nil {
+		t.Fatal(err)
+	}
+	if contents, err := os.ReadFile(filepath.Join(shellState, "session")); err != nil || string(contents) != "preserved" {
+		t.Fatalf("original adapter state contents=%q error=%v", contents, err)
+	}
+	if info, err := os.Stat(filepath.Join(workspace, ".sandherd", "adapters", "shell_minimal")); err != nil || !info.IsDir() {
+		t.Fatalf("replacement adapter state was not created: info=%v error=%v", info, err)
+	}
+}
+
+func TestAdapterStateRejectsUnsafeID(t *testing.T) {
+	if _, err := Execute(context.Background(), Options{Workspace: t.TempDir(), AdapterID: "../escape"}); err == nil {
+		t.Fatal("unsafe adapter ID was accepted")
+	}
+}
+
 func TestExecuteRecoversInterruptedStagingWithoutFollowingSymlink(t *testing.T) {
 	workspace := t.TempDir()
 	state := filepath.Join(workspace, ".sandherd")

@@ -5,7 +5,8 @@
       "id": "replace-with-your-stable-user-id",
       "token": "replace-with-at-least-32-random-characters",
       "permissions": ["control"],
-      "secretProfiles": ["personal"]
+      "secretProfiles": ["personal"],
+      "credentialProfiles": ["personal"]
     },
     {
       "id": "replace-with-an-observer-id",

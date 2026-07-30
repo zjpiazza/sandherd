@@ -27,6 +27,9 @@ spec:
         - name: Desired
           type: string
           jsonPath: .spec.desiredState
+        - name: Adapter
+          type: string
+          jsonPath: .spec.agent.kind
         - name: State
           type: string
           jsonPath: .status.state
@@ -62,6 +65,10 @@ spec:
                 desiredState:
                   type: string
                   enum: [running, stopped, deleted]
+                runtimeGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 1
                 agent:
                   type: object
                   required: [kind, sandboxProfile, resources, workspace, lifecycle]
@@ -69,6 +76,8 @@ spec:
                     kind:
                       type: string
                     sandboxProfile:
+                      type: string
+                    credentialProfile:
                       type: string
                     repository:
                       type: object
@@ -117,7 +126,7 @@ spec:
               properties:
                 state:
                   type: string
-                  enum: [requested, provisioning, starting, running, stopping, stopped, failed, deleting]
+                  enum: [requested, provisioning, starting, running, reconfiguring, stopping, stopped, failed, deleting]
                 observedGeneration:
                   type: integer
                   format: int64
@@ -137,3 +146,15 @@ spec:
                 lastTransitionAt:
                   type: string
                   format: date-time
+                runtime:
+                  type: object
+                  required: [generation, kind, adapterVersion]
+                  properties:
+                    generation:
+                      type: integer
+                      format: int64
+                      minimum: 1
+                    kind:
+                      type: string
+                    adapterVersion:
+                      type: string

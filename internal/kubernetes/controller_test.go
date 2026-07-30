@@ -16,7 +16,7 @@ func TestControllerInitialResyncRecoversAgents(t *testing.T) {
 	client := fakeClient()
 	repository := NewRepository(client, testNamespace)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, lifecycle.NewEventBus(8), logger)
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), lifecycle.NewEventBus(8), logger)
 	controller := NewController(client, repository, reconciler, testNamespace, logger)
 	agent, _, err := repository.Create(context.Background(), "owner", "key", validCreateRequest("alpha"))
 	if err != nil {
@@ -53,7 +53,7 @@ func TestControllerDeletesManagedOrphanClaim(t *testing.T) {
 	client := fakeClient()
 	repository := NewRepository(client, testNamespace)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, nil, logger)
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), nil, logger)
 	controller := NewController(client, repository, reconciler, testNamespace, logger)
 	orphanID := lifecycle.NewID()
 	claim := sandboxClaim(lifecycle.Agent{ID: orphanID, Owner: "owner", Spec: validCreateRequest("orphan").Spec}, testNamespace, "pool")

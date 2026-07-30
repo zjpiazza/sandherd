@@ -20,6 +20,8 @@ servers:
 tags:
   - name: Agents
     description: Durable logical agent lifecycle
+  - name: Adapters
+    description: Installed agent runtime capabilities
   - name: Events
     description: Lifecycle event subscriptions
   - name: Terminal
@@ -27,6 +29,32 @@ tags:
 security:
   - bearerAuth: []
 paths:
+  /v1alpha1/adapters:
+    get:
+      tags: [Adapters]
+      operationId: listAdapters
+      summary: List installed agent adapters and their public capabilities
+      description: Internal commands, warm pools, and credential bindings are never returned.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Installed adapters ordered by stable adapter ID
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/RequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdapterList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1alpha1/agents:
     post:
       tags: [Agents]
@@ -47,12 +75,12 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateAgentRequest'
             examples:
-              codex:
-                summary: Persistent Codex agent
+              shell:
+                summary: Persistent development shell adapter
                 value:
                   name: api-refactor
                   spec:
-                    kind: codex
+                    kind: shell
                     sandboxProfile: standard
                     repository:
                       url: https://github.com/example/project.git
@@ -64,7 +92,6 @@ paths:
                       size: 20Gi
                       storageProfile: default
                       retentionPolicy: retain
-                    secretProfile: personal-agents
                     lifecycle:
                       idleTimeoutSeconds: 3600
       responses:
@@ -291,6 +318,47 @@ paths:
           $ref: '#/components/responses/InvalidStateTransition'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
+        '503':
+          $ref: '#/components/responses/AuthenticationUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1alpha1/agents/{agentId}:change-adapter:
+    post:
+      tags: [Agents]
+      operationId: changeAgentAdapter
+      summary: Replace an agent runtime while preserving its logical identity and workspace
+      description: |
+        Validates the target adapter and credential profile before draining the
+        current runtime. Sandherd preserves the workspace, provisions a new
+        runtime generation, and keeps adapter-native state isolated by adapter.
+        Native sessions are not translated between different adapters.
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeAdapterRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/AgentMutationAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidStateTransition'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
         '503':
           $ref: '#/components/responses/AuthenticationUnavailable'
         '500':
@@ -633,6 +701,7 @@ components:
         - provisioning
         - starting
         - running
+        - reconfiguring
         - stopping
         - stopped
         - failed
@@ -646,6 +715,7 @@ components:
         - name
         - owner
         - generation
+        - runtimeGeneration
         - spec
         - status
         - createdAt
@@ -666,6 +736,10 @@ components:
           type: integer
           minimum: 1
           description: Desired-state generation
+        runtimeGeneration:
+          type: integer
+          minimum: 1
+          description: Monotonic generation of the desired adapter runtime
         spec:
           $ref: '#/components/schemas/AgentSpec'
         status:
@@ -685,6 +759,23 @@ components:
           $ref: '#/components/schemas/AgentName'
         spec:
           $ref: '#/components/schemas/AgentSpec'
+    ChangeAdapterRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+          description: Stable ID of an installed adapter
+        credentialProfile:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+          description: Operator-defined agent credential policy; never credential material
     AgentSpec:
       type: object
       additionalProperties: false
@@ -709,6 +800,12 @@ components:
           pattern: '^[a-z][a-z0-9_-]*$'
           description: Public policy profile, not a raw Kubernetes template name
           examples: [standard]
+        credentialProfile:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+          description: Operator-defined agent credential policy; never credential material
         repository:
           $ref: '#/components/schemas/RepositorySpec'
         resources:
@@ -812,6 +909,25 @@ components:
         lastTransitionAt:
           type: string
           format: date-time
+        runtime:
+          $ref: '#/components/schemas/RuntimeStatus'
+    RuntimeStatus:
+      type: object
+      additionalProperties: false
+      required: [generation, kind, adapterVersion]
+      properties:
+        generation:
+          type: integer
+          minimum: 1
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+        adapterVersion:
+          type: string
+          minLength: 1
+          maxLength: 128
     AgentList:
       type: object
       additionalProperties: false
@@ -836,6 +952,7 @@ components:
           type: string
           enum:
             - agent.created
+            - agent.adapter_change_requested
             - agent.state_changed
             - agent.controller_taken_over
             - agent.deleted
@@ -851,6 +968,40 @@ components:
         requestId:
           type: string
           minLength: 1
+    AdapterList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Adapter'
+    Adapter:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, version, capabilities]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9_-]*$'
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 128
+        version:
+          type: string
+          minLength: 1
+          maxLength: 128
+        capabilities:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [interactive, headless, session-resume, mcp, acp, subscription-auth]
     ErrorResponse:
       type: object
       additionalProperties: false

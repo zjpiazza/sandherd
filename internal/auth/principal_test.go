@@ -16,13 +16,13 @@ const (
 
 func TestFileAuthenticatorPrincipalsPermissionsProfilesAndRotation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "principals.json")
-	writePrincipalFile(t, path, `{"version":1,"principals":[{"id":"alice@example.com","token":"`+aliceToken+`","permissions":["control"],"secretProfiles":["personal"]},{"id":"bob","token":"`+bobToken+`","permissions":["observe"]}]}`)
+	writePrincipalFile(t, path, `{"version":1,"principals":[{"id":"alice@example.com","token":"`+aliceToken+`","permissions":["control"],"secretProfiles":["personal"],"credentialProfiles":["subscription"]},{"id":"bob","token":"`+bobToken+`","permissions":["observe"]}]}`)
 	authenticator, err := NewFileAuthenticator(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	alice, err := authenticator.Authenticate(context.Background(), aliceToken)
-	if err != nil || alice.ID != "alice@example.com" || !alice.CanControl() || !alice.CanObserve() || !alice.AllowsSecretProfile("personal") || alice.AllowsSecretProfile("other") {
+	if err != nil || alice.ID != "alice@example.com" || !alice.CanControl() || !alice.CanObserve() || !alice.AllowsSecretProfile("personal") || alice.AllowsSecretProfile("other") || !alice.AllowsCredentialProfile("subscription") || alice.AllowsCredentialProfile("other") {
 		t.Fatalf("alice = %#v, %v", alice, err)
 	}
 	bob, err := authenticator.Authenticate(context.Background(), bobToken)
@@ -50,6 +50,7 @@ func TestFileAuthenticatorRejectsUnsafeConfigurationWithoutLeakingTokens(t *test
 		`{"version":1,"principals":[{"id":"alice","token":"short","permissions":["control"]}]}`,
 		`{"version":1,"principals":[{"id":"alice","token":"` + aliceToken + `","permissions":["admin"]}]}`,
 		`{"version":1,"principals":[{"id":"alice","token":"` + aliceToken + `","permissions":["control"],"secretProfiles":["Bad"]}]}`,
+		`{"version":1,"principals":[{"id":"alice","token":"` + aliceToken + `","permissions":["control"],"credentialProfiles":["Bad"]}]}`,
 		`{"version":1,"principals":[{"id":"alice","token":"` + aliceToken + `","permissions":["control"]},{"id":"bob","token":"` + aliceToken + `","permissions":["observe"]}]}`,
 	}
 	for _, contents := range tests {
