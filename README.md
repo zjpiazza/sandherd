@@ -185,8 +185,8 @@ The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` comman
 
 ### Agent runtimes
 
-- [ ] Define the provider-neutral adapter and credential framework ([#25](https://github.com/zjpiazza/sandherd/issues/25))
-- [ ] Run Codex with durable ChatGPT subscription authentication ([#26](https://github.com/zjpiazza/sandherd/issues/26))
+- [x] Define the provider-neutral adapter and credential framework ([#25](https://github.com/zjpiazza/sandherd/issues/25))
+- [x] Run Codex with durable ChatGPT subscription authentication ([#26](https://github.com/zjpiazza/sandherd/issues/26))
 - [ ] Support Claude Code, including subscription credentials ([#27](https://github.com/zjpiazza/sandherd/issues/27))
 - [ ] Support OpenCode with selectable model providers ([#28](https://github.com/zjpiazza/sandherd/issues/28))
 - [ ] Support the Pi coding agent with selectable model providers ([#29](https://github.com/zjpiazza/sandherd/issues/29))

@@ -8,3 +8,5 @@ resources:
   - deployment.yaml
   - network-policy.yaml
   - ../agent-runtime/base
+  - ../agent-runtime/codex
+  - ../codex-auth

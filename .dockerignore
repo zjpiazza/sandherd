@@ -5,3 +5,6 @@
 !cmd/**
 !internal/
 !internal/**
+!build/
+!build/codex/
+!build/codex/checksums.txt

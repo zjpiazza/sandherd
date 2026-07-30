@@ -17,3 +17,12 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --storage-profile=default=rook-ceph-block
+  - target:
+      version: v1
+      kind: PersistentVolumeClaim
+      name: sandherd-codex-auth
+      namespace: sandherd-system
+    patch: |-
+      - op: add
+        path: /spec/storageClassName
+        value: rook-ceph-block
