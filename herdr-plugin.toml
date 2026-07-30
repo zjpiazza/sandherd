@@ -1,0 +1,66 @@
+id = "dev.sandherd"
+name = "Sandherd"
+version = "0.1.0"
+min_herdr_version = "0.7.4"
+description = "Create and control isolated remote coding agents through Sandherd."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["mkdir", "-p", "bin"]
+
+[[build]]
+command = ["go", "build", "-trimpath", "-o", "bin/sandherd-herdr-bridge", "./cmd/herdr-bridge"]
+
+[[actions]]
+id = "manage"
+title = "Manage Sandherd agents"
+command = ["bin/sandherd-herdr-bridge", "action", "manage"]
+
+[[actions]]
+id = "create"
+title = "Create Sandherd agent"
+command = ["bin/sandherd-herdr-bridge", "action", "create"]
+
+[[actions]]
+id = "attach"
+title = "Attach Sandherd agent"
+command = ["bin/sandherd-herdr-bridge", "action", "attach"]
+
+[[actions]]
+id = "stop"
+title = "Stop Sandherd agent"
+command = ["bin/sandherd-herdr-bridge", "action", "stop"]
+
+[[actions]]
+id = "resume"
+title = "Resume Sandherd agent"
+command = ["bin/sandherd-herdr-bridge", "action", "resume"]
+
+[[actions]]
+id = "focus"
+title = "Focus Sandherd agent pane"
+command = ["bin/sandherd-herdr-bridge", "action", "focus"]
+
+[[actions]]
+id = "takeover"
+title = "Take over Sandherd agent control"
+command = ["bin/sandherd-herdr-bridge", "action", "takeover"]
+
+[[actions]]
+id = "delete"
+title = "Delete Sandherd agent"
+command = ["bin/sandherd-herdr-bridge", "action", "delete"]
+
+[[panes]]
+id = "manager"
+title = "Sandherd agents"
+placement = "popup"
+width = "80%"
+height = "70%"
+command = ["bin/sandherd-herdr-bridge", "manager"]
+
+[[panes]]
+id = "agent"
+title = "Sandherd agent"
+placement = "split"
+command = ["bin/sandherd-herdr-bridge", "attach"]

@@ -1,5 +1,6 @@
 # Build and test output
 /dist/
+/bin/
 /coverage.out
 
 # Local configuration and secrets

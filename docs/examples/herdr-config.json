@@ -1,0 +1,22 @@
+{
+  "baseUrl": "https://sandherd.example.ts.net",
+  "tokenFile": "/home/you/.config/sandherd/api-token",
+  "create": {
+    "spec": {
+      "kind": "codex",
+      "sandboxProfile": "standard",
+      "resources": {
+        "cpu": "2",
+        "memory": "4Gi"
+      },
+      "workspace": {
+        "size": "20Gi",
+        "storageProfile": "default",
+        "retentionPolicy": "retain"
+      },
+      "lifecycle": {
+        "idleTimeoutSeconds": 0
+      }
+    }
+  }
+}
