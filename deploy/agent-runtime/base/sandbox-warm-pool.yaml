@@ -1,0 +1,12 @@
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: sandherd-standard
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-standard
+    app.kubernetes.io/part-of: sandherd
+spec:
+  replicas: 0
+  sandboxTemplateRef:
+    name: sandherd-standard

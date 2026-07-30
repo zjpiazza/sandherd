@@ -7,6 +7,10 @@ does not signal, stop, or otherwise change the process.
 The runner API is internal to an Agent Sandbox. The terminal gateway is its
 production caller; end-user clients use the public Sandherd API instead.
 
+The standard SandboxTemplate starts the runner only after the unprivileged
+[`workspace-bootstrap`](workspaces.md) init container has prepared the durable
+repository. Bootstrap credentials are not mounted into the runner container.
+
 ## Starting a runner
 
 Create a control token in a mode-restricted file and pass the agent command

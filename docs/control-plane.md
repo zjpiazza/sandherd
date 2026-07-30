@@ -26,9 +26,9 @@ The running path waits for all of the following before publishing `running`:
 3. the claim reports `Ready`;
 4. the runner Pod reports `Ready`.
 
-Stop patches the adopted Sandbox to zero replicas and does not report `stopped`
-until suspension is observed. Resume restores one replica and waits through the
-same runner readiness gates. Delete uses the Agent finalizer and foreground
+Stop sets the adopted Sandbox operating mode to `Suspended` and does not report
+`stopped` until the `Suspended` condition is observed. Resume restores `Running`
+mode and waits through the same runner readiness gates. Delete uses the Agent finalizer and foreground
 claim deletion. A `retain` workspace has its Kubernetes owner references removed
 before claim deletion; a `delete` workspace follows normal cascading cleanup.
 Managed claims without an Agent are detected and removed as orphans.
@@ -96,6 +96,20 @@ kubectl --context admin@homelab --namespace sandherd-system \
 
 kubectl --context admin@homelab apply --kustomize deploy/control-plane-homelab
 ```
+
+The control plane separately maps public sandbox, storage, and repository
+secret profiles to administrator-approved Kubernetes resources:
+
+```text
+--sandbox-profile=standard=sandherd-standard
+--storage-profile=default=rook-ceph-block
+--secret-profile=personal=sandherd-standard-https-private
+```
+
+The portable deployment uses the cluster's default StorageClass. The homelab
+overlay maps `default` to `rook-ceph-block`. See the [workspace guide](workspaces.md)
+for the standard runtime, repository bootstrap, credential isolation, and
+retention behavior.
 
 Clusters whose CNI enforces the portable Kubernetes API namespace selector can
 apply `deploy/control-plane` directly. The homelab overlay grants the Talos API

@@ -26,6 +26,9 @@ fi
 for required in \
   'kind: CustomResourceDefinition' \
   'name: agent-sandbox-controller' \
+  'name: agent-sandbox-config' \
+  'allowed-label-domains:' \
+  'sandherd.dev' \
   'name: sandbox-router' \
   --authz-mode=tokenreview \
   --authz-tokenreview-require-token=true \
@@ -44,6 +47,29 @@ fi
 kustomize "$repo_root/deploy/agent-sandbox/smoke/base" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/smoke/overlays/homelab" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/flux" >/dev/null
+kustomize "$repo_root/deploy/agent-runtime/base" >"$rendered"
+for required in \
+  'name: sandherd-standard' \
+  'name: workspace-bootstrap' \
+  'workingDir: /workspace' \
+  'volumeClaimTemplatesPolicy: Allowed' \
+  'automountServiceAccountToken: false' \
+  'name: capability-public-key'; do
+  if ! grep -q -- "$required" "$rendered"; then
+    printf 'rendered agent runtime is missing: %s\n' "$required" >&2
+    exit 1
+  fi
+done
+if grep -q 'hostPath:' "$rendered"; then
+  printf '%s\n' 'agent runtime must not mount host paths' >&2
+  exit 1
+fi
+kustomize "$repo_root/deploy/agent-runtime/examples/https-credential-profile" >"$rendered"
+if awk '/^      containers:/{inside=1} /^      initContainers:/{inside=0} inside' "$rendered" | grep -q 'repository-credential'; then
+  printf '%s\n' 'repository bootstrap credentials must not be mounted into the runner container' >&2
+  exit 1
+fi
+kustomize "$repo_root/deploy/agent-runtime/examples/ssh-credential-profile" >/dev/null
 kustomize "$repo_root/deploy/control-plane" >"$rendered"
 kustomize "$repo_root/deploy/control-plane-homelab" >/dev/null
 

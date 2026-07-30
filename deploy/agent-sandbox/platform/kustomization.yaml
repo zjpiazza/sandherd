@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - controller-config.yaml
   - serviceaccounts.yaml
   - router.yaml
   - router-rbac.yaml

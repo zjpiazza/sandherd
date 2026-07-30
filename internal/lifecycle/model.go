@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -132,11 +133,19 @@ func (r CreateRequest) Validate() error {
 	}
 	if r.Spec.Repository != nil {
 		parsed, err := url.Parse(r.Spec.Repository.URL)
-		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "ssh") || parsed.Host == "" {
+		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "ssh") || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("spec.repository.url must be an HTTPS or SSH URL")
 		}
-		if len(r.Spec.Repository.Revision) > 256 {
-			return fmt.Errorf("spec.repository.revision must not exceed 256 characters")
+		if parsed.Scheme == "https" && parsed.User != nil {
+			return fmt.Errorf("spec.repository.url must not contain HTTPS credentials")
+		}
+		if parsed.Scheme == "ssh" && parsed.User != nil {
+			if _, hasPassword := parsed.User.Password(); hasPassword {
+				return fmt.Errorf("spec.repository.url must not contain an SSH password")
+			}
+		}
+		if strings.HasPrefix(r.Spec.Repository.Revision, "-") || len(r.Spec.Repository.Revision) > 256 || strings.IndexFunc(r.Spec.Repository.Revision, func(value rune) bool { return value < 0x21 || value == 0x7f }) >= 0 {
+			return fmt.Errorf("spec.repository.revision is invalid")
 		}
 	}
 	if r.Spec.Workspace.StorageProfile != "" && (len(r.Spec.Workspace.StorageProfile) > 64 || !profilePattern.MatchString(r.Spec.Workspace.StorageProfile)) {
@@ -144,6 +153,9 @@ func (r CreateRequest) Validate() error {
 	}
 	if r.Spec.SecretProfile != "" && (len(r.Spec.SecretProfile) > 64 || !profilePattern.MatchString(r.Spec.SecretProfile)) {
 		return fmt.Errorf("spec.secretProfile is invalid")
+	}
+	if r.Spec.SecretProfile != "" && r.Spec.Repository == nil {
+		return fmt.Errorf("spec.secretProfile requires spec.repository")
 	}
 	if r.Spec.Lifecycle.IdleTimeoutSeconds < 0 || r.Spec.Lifecycle.IdleTimeoutSeconds > 604800 {
 		return fmt.Errorf("spec.lifecycle.idleTimeoutSeconds must be between 0 and 604800")

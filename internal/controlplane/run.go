@@ -59,6 +59,8 @@ type runConfig struct {
 	runnerPort           int
 	owner                string
 	profiles             profileMap
+	storageProfiles      profileMap
+	secretProfiles       profileMap
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -78,7 +80,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
-	configuration := runConfig{profiles: profileMap{"standard": "sandherd-standard"}}
+	configuration := runConfig{
+		profiles:        profileMap{"standard": "sandherd-standard"},
+		storageProfiles: profileMap{"default": ""}, secretProfiles: profileMap{},
+	}
 	flags := flag.NewFlagSet("control-plane", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	showVersion := flags.Bool("version", false, "print version information and exit")
@@ -94,6 +99,8 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 	flags.IntVar(&configuration.runnerPort, "runner-port", 8080, "runner port inside each sandbox")
 	flags.StringVar(&configuration.owner, "owner-id", "", "stable owner ID represented by the static credential")
 	flags.Var(configuration.profiles, "sandbox-profile", "approved public-profile=warm-pool mapping (repeatable)")
+	flags.Var(configuration.storageProfiles, "storage-profile", "approved public-profile=storage-class mapping; use '-' for the cluster default (repeatable)")
+	flags.Var(configuration.secretProfiles, "secret-profile", "approved public-profile=credentialed-warm-pool mapping (repeatable)")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: control-plane [flags]")
 		flags.PrintDefaults()
@@ -112,7 +119,15 @@ func parseRunConfig(args []string, stderr io.Writer) (runConfig, bool, error) {
 		fmt.Fprintln(stderr, "control-plane: --owner-id is required and must not exceed 256 characters")
 		return runConfig{}, false, fmt.Errorf("invalid owner ID")
 	}
-	if configuration.namespace == "" || len(configuration.profiles) == 0 || configuration.capabilityPrivateKey == "" || configuration.routerURL == "" || configuration.routerTokenFile == "" || configuration.runnerPort < 1 || configuration.runnerPort > 65535 {
+	if configuration.storageProfiles["default"] == "-" {
+		configuration.storageProfiles["default"] = ""
+	}
+	for profile, storageClass := range configuration.storageProfiles {
+		if storageClass == "-" {
+			configuration.storageProfiles[profile] = ""
+		}
+	}
+	if configuration.namespace == "" || len(configuration.profiles) == 0 || len(configuration.storageProfiles) == 0 || configuration.capabilityPrivateKey == "" || configuration.routerURL == "" || configuration.routerTokenFile == "" || configuration.runnerPort < 1 || configuration.runnerPort > 65535 {
 		return runConfig{}, false, fmt.Errorf("namespace, gateway routing, and at least one sandbox profile are required")
 	}
 	return configuration, false, nil
@@ -173,6 +188,7 @@ func execute(configuration runConfig, stderr io.Writer) error {
 		return fmt.Errorf("configure terminal gateway: %w", err)
 	}
 	reconciler := cluster.NewReconciler(client, repository, configuration.namespace, configuration.profiles, events, logger)
+	reconciler.ConfigureWorkspaceProfiles(configuration.storageProfiles, configuration.secretProfiles)
 	controller := cluster.NewController(client, repository, reconciler, configuration.namespace, logger)
 	var ready atomic.Bool
 	if _, err := repository.ListAll(context.Background()); err != nil {

@@ -39,6 +39,36 @@ func TestCreateRequestValidationAndDefaults(t *testing.T) {
 	}
 }
 
+func TestRepositoryValidationRejectsCredentialAndOptionInjection(t *testing.T) {
+	request := CreateRequest{Name: "agent", Spec: AgentSpec{
+		Kind: "codex", SandboxProfile: "standard",
+		Repository: &RepositorySpec{URL: "https://github.com/example/repo.git", Revision: "main"},
+		Resources:  ResourceSpec{CPU: "1", Memory: "1Gi"},
+		Workspace:  WorkspaceSpec{Size: "10Gi", StorageProfile: "default", RetentionPolicy: "retain"},
+	}}
+	for _, invalid := range []RepositorySpec{
+		{URL: "https://user:secret@github.com/example/repo.git", Revision: "main"},
+		{URL: "ssh://git:secret@github.com/example/repo.git", Revision: "main"},
+		{URL: "https://github.com/example/repo.git?token=secret", Revision: "main"},
+		{URL: "https://github.com/example/repo.git", Revision: "--upload-pack=evil"},
+		{URL: "https://github.com/example/repo.git", Revision: "main\nother"},
+	} {
+		request.Spec.Repository = &invalid
+		if err := request.Validate(); err == nil {
+			t.Fatalf("repository %#v was accepted", invalid)
+		}
+	}
+	request.Spec.Repository = &RepositorySpec{URL: "ssh://git@github.com/example/repo.git", Revision: "refs/heads/main"}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("valid SSH repository rejected: %v", err)
+	}
+	request.Spec.Repository = nil
+	request.Spec.SecretProfile = "private"
+	if err := request.Validate(); err == nil || !strings.Contains(err.Error(), "requires") {
+		t.Fatalf("secret profile without repository error = %v", err)
+	}
+}
+
 func TestStateTransitionGuards(t *testing.T) {
 	if !CanStop(StateRunning) || !CanStop(StateStopped) || CanStop(StateFailed) {
 		t.Fatal("stop transition guard is incorrect")

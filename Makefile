@@ -5,7 +5,8 @@ DOCKER ?= docker
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= unknown
-BINARIES := control-plane runner herdr-bridge
+BINARIES := control-plane runner herdr-bridge workspace-bootstrap
+CONTAINER_TARGETS := control-plane runner herdr-bridge workspace-bootstrap agent-runtime
 KUSTOMIZE_VERSION ?= v5.8.1
 AGENT_SANDBOX_ROUTER_IMAGE ?= sandherd/agent-sandbox-router:v0.5.3
 LDFLAGS := -s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$(VERSION) -X github.com/zjpiazza/sandherd/internal/buildinfo.Commit=$(COMMIT) -X github.com/zjpiazza/sandherd/internal/buildinfo.Date=$(BUILD_DATE)
@@ -67,6 +68,7 @@ build-linux:
 		CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o "dist/linux-$$arch/control-plane" ./cmd/control-plane; \
 		CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o "dist/linux-$$arch/runner" ./cmd/runner; \
 		CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o "dist/linux-$$arch/herdr-bridge" ./cmd/herdr-bridge; \
+		CGO_ENABLED=0 GOOS=linux GOARCH="$$arch" $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o "dist/linux-$$arch/workspace-bootstrap" ./cmd/workspace-bootstrap; \
 	done
 
 smoke: build
@@ -75,7 +77,7 @@ smoke: build
 	done
 
 container-build:
-	@for binary in $(BINARIES); do \
+	@for binary in $(CONTAINER_TARGETS); do \
 		$(DOCKER) build --target "$$binary" --tag "sandherd/$$binary:dev" . || exit 1; \
 	done
 

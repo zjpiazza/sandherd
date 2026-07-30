@@ -4,3 +4,15 @@ kind: Kustomization
 resources:
   - ../control-plane
   - kube-api-egress.yaml
+
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: sandherd-control-plane
+      namespace: sandherd-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --storage-profile=default=rook-ceph-block

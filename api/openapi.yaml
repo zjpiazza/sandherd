@@ -697,12 +697,13 @@ components:
         url:
           type: string
           format: uri
-          pattern: '^(https|ssh)://'
-          description: HTTPS or SSH repository URL
+          pattern: '^(https://[^/?#@]+(?:/[^?#]*)?|ssh://(?:[^/:@?#]+@)?[^/?#@]+(?:/[^?#]*)?)$'
+          description: HTTPS or SSH repository URL without embedded credentials, query, or fragment
         revision:
           type: string
           minLength: 1
           maxLength: 256
+          pattern: '^[^-\x00-\x20\x7f][^\x00-\x20\x7f]{0,255}$'
           default: HEAD
     ResourceSpec:
       type: object

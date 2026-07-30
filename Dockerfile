@@ -29,7 +29,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -trimpath \
       -ldflags="-s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$VERSION -X github.com/zjpiazza/sandherd/internal/buildinfo.Commit=$COMMIT -X github.com/zjpiazza/sandherd/internal/buildinfo.Date=$BUILD_DATE" \
-      -o /out/herdr-bridge ./cmd/herdr-bridge
+      -o /out/herdr-bridge ./cmd/herdr-bridge && \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+    go build -trimpath \
+      -ldflags="-s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$VERSION -X github.com/zjpiazza/sandherd/internal/buildinfo.Commit=$COMMIT -X github.com/zjpiazza/sandherd/internal/buildinfo.Date=$BUILD_DATE" \
+      -o /out/workspace-bootstrap ./cmd/workspace-bootstrap
 
 FROM scratch AS runtime
 USER 65532:65532
@@ -45,3 +49,15 @@ ENTRYPOINT ["/sandherd"]
 FROM runtime AS herdr-bridge
 COPY --from=build /out/herdr-bridge /sandherd
 ENTRYPOINT ["/sandherd"]
+
+FROM runtime AS workspace-bootstrap
+COPY --from=build /out/workspace-bootstrap /sandherd
+ENTRYPOINT ["/sandherd"]
+
+FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 AS agent-runtime
+RUN apk add --no-cache bash ca-certificates git openssh-client
+COPY --from=build /out/runner /usr/local/bin/sandherd-runner
+COPY --from=build /out/workspace-bootstrap /usr/local/bin/workspace-bootstrap
+USER 65532:65532
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/sandherd-runner"]

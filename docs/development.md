@@ -13,12 +13,15 @@ api/                    REST and terminal protocol source contracts
 cmd/control-plane/      Client-neutral lifecycle API entry point
 cmd/runner/             In-sandbox agent process entry point
 cmd/herdr-bridge/       Herdr integration entry point
+cmd/workspace-bootstrap/ Durable workspace initializer entry point
 build/agent-sandbox-router/ Pinned upstream router image build
 deploy/agent-sandbox/   Kustomize, Flux, policy, and smoke resources
+deploy/agent-runtime/   Standard runtime template and credential profiles
 deploy/control-plane/   Agent CRD, API deployment, RBAC, and network policy
 deploy/control-plane-homelab/ Cilium overlay for the Talos homelab
 internal/api/           Transport-neutral API types
 internal/auth/          Authentication and authorization boundary
+internal/bootstrap/     Safe, idempotent durable workspace bootstrap
 internal/herdrbridge/   Herdr plugin, API client, and terminal bridge
 internal/kubernetes/    Kubernetes and Agent Sandbox adapter boundary
 internal/lifecycle/     Agent state transition boundary
@@ -55,6 +58,7 @@ dependency:
 go run ./cmd/control-plane --version
 go run ./cmd/runner --version
 go run ./cmd/herdr-bridge --version
+go run ./cmd/workspace-bootstrap --version
 ```
 
 The runtime container targets are `control-plane`, `runner`, and
