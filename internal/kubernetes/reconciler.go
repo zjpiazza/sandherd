@@ -157,6 +157,9 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	if reason, message, failed := bootstrapFailure(pod); failed {
 		return r.transition(ctx, agent, lifecycle.StateFailed, reason, message)
 	}
+	if reason, message, failed := credentialFailure(pod); failed {
+		return r.transition(ctx, agent, lifecycle.StateFailed, reason, message)
+	}
 	if phase == "Failed" {
 		return r.transition(ctx, agent, lifecycle.StateFailed, "runner_failed", "the runner pod failed")
 	}
@@ -410,6 +413,39 @@ func bootstrapFailure(pod *unstructured.Unstructured) (string, string, bool) {
 			return "bootstrap_timeout", "repository bootstrap timed out", true
 		default:
 			return "bootstrap_failed", "workspace bootstrap failed", true
+		}
+	}
+	return "", "", false
+}
+
+func credentialFailure(pod *unstructured.Unstructured) (string, string, bool) {
+	for _, statusField := range []string{"initContainerStatuses", "containerStatuses"} {
+		statuses, _, _ := unstructured.NestedSlice(pod.Object, "status", statusField)
+		for _, value := range statuses {
+			status, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := status["name"].(string)
+			if name != "credential-bootstrap" && name != "credential-sync" {
+				continue
+			}
+			exitCode, found, _ := unstructured.NestedInt64(status, "state", "terminated", "exitCode")
+			if !found {
+				waitingReason, _, _ := unstructured.NestedString(status, "state", "waiting", "reason")
+				if waitingReason == "CrashLoopBackOff" {
+					exitCode, found, _ = unstructured.NestedInt64(status, "lastState", "terminated", "exitCode")
+				}
+			}
+			if !found {
+				continue
+			}
+			switch exitCode {
+			case 41:
+				return "credential_unavailable", "the agent credential is unavailable; verify the platform credential coordinator", true
+			case 42:
+				return "credential_reauthentication_required", "the agent credential must be reauthenticated by an operator", true
+			}
 		}
 	}
 	return "", "", false

@@ -6,13 +6,14 @@ kubectl_bin=${KUBECTL:-kubectl}
 context=${KUBE_CONTEXT:-admin@homelab}
 control_plane_image=${CONTROL_PLANE_IMAGE:-}
 agent_runtime_image=${AGENT_RUNTIME_IMAGE:-}
+codex_runtime_image=${CODEX_RUNTIME_IMAGE:-}
 principals_file=${SANDHERD_API_PRINCIPALS_FILE:-}
 private_key_file=${SANDHERD_CAPABILITY_PRIVATE_KEY_FILE:-}
 public_key_file=${SANDHERD_CAPABILITY_PUBLIC_KEY_FILE:-}
 overlay=${SANDHERD_OVERLAY:-$repo_root/deploy/control-plane-homelab}
 dry_run=${DRY_RUN:-}
 
-for value_name in CONTROL_PLANE_IMAGE AGENT_RUNTIME_IMAGE SANDHERD_API_PRINCIPALS_FILE SANDHERD_CAPABILITY_PRIVATE_KEY_FILE SANDHERD_CAPABILITY_PUBLIC_KEY_FILE; do
+for value_name in CONTROL_PLANE_IMAGE AGENT_RUNTIME_IMAGE CODEX_RUNTIME_IMAGE SANDHERD_API_PRINCIPALS_FILE SANDHERD_CAPABILITY_PRIVATE_KEY_FILE SANDHERD_CAPABILITY_PUBLIC_KEY_FILE; do
   eval "value=\${$value_name:-}"
   if [ -z "$value" ]; then
     printf '%s is required.\n' "$value_name" >&2
@@ -20,7 +21,7 @@ for value_name in CONTROL_PLANE_IMAGE AGENT_RUNTIME_IMAGE SANDHERD_API_PRINCIPAL
   fi
 done
 
-case "$control_plane_image$agent_runtime_image" in
+case "$control_plane_image$agent_runtime_image$codex_runtime_image" in
   *[!A-Za-z0-9_./:@+-]*)
     printf '%s\n' 'Image references contain unsupported characters.' >&2
     exit 2
@@ -51,7 +52,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 "$kubectl_bin" kustomize "$overlay" >"$rendered"
-awk -v control_plane="$control_plane_image" -v agent_runtime="$agent_runtime_image" '
+awk -v control_plane="$control_plane_image" -v agent_runtime="$agent_runtime_image" -v codex_runtime="$codex_runtime_image" '
   $1 == "image:" && $2 == "sandherd/control-plane:dev" {
     print "        image: " control_plane
     next
@@ -61,10 +62,15 @@ awk -v control_plane="$control_plane_image" -v agent_runtime="$agent_runtime_ima
     print prefix "image: " agent_runtime
     next
   }
+  $1 == "image:" && $2 == "sandherd/codex-runtime:dev" {
+    prefix = substr($0, 1, index($0, "image:") - 1)
+    print prefix "image: " codex_runtime
+    next
+  }
   { print }
 ' "$rendered" >"$configured"
 
-if grep -Eq 'image: sandherd/(control-plane|agent-runtime):dev' "$configured"; then
+if grep -Eq 'image: sandherd/(control-plane|agent-runtime|codex-runtime):dev' "$configured"; then
   printf '%s\n' 'Failed to replace all development image references.' >&2
   exit 1
 fi
@@ -99,5 +105,6 @@ fi
 "$kubectl_bin" --context "$context" wait --for=condition=Established customresourcedefinition/agents.sandherd.dev --timeout=120s
 "$kubectl_bin" --context "$context" --namespace sandherd-system rollout status deployment/sandherd-control-plane --timeout=180s
 "$kubectl_bin" --context "$context" --namespace sandherd-system get sandboxtemplate/sandherd-standard sandboxwarmpool/sandherd-standard >/dev/null
+"$kubectl_bin" --context "$context" --namespace sandherd-system get sandboxtemplate/sandherd-codex sandboxwarmpool/sandherd-codex deployment/sandherd-codex-auth >/dev/null
 
-printf 'Sandherd control plane and standard agent runtime are ready on context %s.\n' "$context"
+printf 'Sandherd control plane and agent runtimes are installed on context %s. Bootstrap Codex authentication before creating a Codex agent.\n' "$context"

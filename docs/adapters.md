@@ -63,10 +63,11 @@ Supported credential modes are:
 | `mutable` | Subscription/OAuth state is durable and refreshable. |
 | `workload-identity` | The runtime uses operator-provided identity or an exec credential. |
 
-The initial base registry enables two credential-free shell development
-adapters. Production Codex, Claude Code, OpenCode, Pi, and Grok Build entries
-are delivered by their tracked integration issues rather than pretending the
-generic runtime already contains those binaries.
+The base registry enables two credential-free shell development adapters and a
+pinned Codex adapter using the platform ChatGPT subscription coordinator. See
+the [Codex operator guide](codex.md). Claude Code, OpenCode, Pi, and Grok Build
+entries are delivered by their tracked integration issues rather than
+pretending the generic runtime already contains those binaries.
 
 To disable an adapter, remove its definition and roll the control-plane
 Deployment. Existing Agents retain their desired adapter ID but cannot be

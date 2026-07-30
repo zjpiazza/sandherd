@@ -75,6 +75,26 @@ if awk '/^      containers:/{inside=1} /^      initContainers:/{inside=0} inside
   exit 1
 fi
 kustomize "$repo_root/deploy/agent-runtime/examples/ssh-credential-profile" >/dev/null
+kustomize "$repo_root/deploy/agent-runtime/codex" >"$rendered"
+for required in \
+  'name: sandherd-codex' \
+  'sandherd.dev/adapter-id: codex' \
+  'name: credential-bootstrap' \
+  'name: credential-sync' \
+  'name: CODEX_HOME' \
+  'value: /home/sandherd/.codex' \
+  'name: sandherd-codex-auth' \
+  'port: 8090' \
+  'automountServiceAccountToken: false'; do
+  if ! grep -q -- "$required" "$rendered"; then
+    printf 'rendered Codex runtime is missing: %s\n' "$required" >&2
+    exit 1
+  fi
+done
+if grep -Eq 'claimName: sandherd-codex-auth|kind: Secret|refresh_token' "$rendered"; then
+  printf '%s\n' 'Codex sandbox runtime exposes coordinator credential authority' >&2
+  exit 1
+fi
 kustomize "$repo_root/deploy/control-plane" >"$rendered"
 kustomize "$repo_root/deploy/control-plane-homelab" >"$rendered"
 
@@ -87,7 +107,13 @@ for required in \
   'path: principals.json' \
   'name: sandherd-control-plane-tailnet' \
   'loadBalancerClass: tailscale' \
-  'kubernetes.io/metadata.name: tailscale'; do
+  'kubernetes.io/metadata.name: tailscale' \
+  'name: sandherd-codex-auth' \
+  'storageClassName: rook-ceph-block' \
+  'accessModes:' \
+  'ReadWriteOnce' \
+  'chatgpt-subscription' \
+  '0.146.0'; do
   if ! grep -q -- "$required" "$rendered"; then
     printf 'rendered control plane is missing: %s\n' "$required" >&2
     exit 1

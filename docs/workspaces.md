@@ -9,13 +9,14 @@ it at `/workspace`, but the agent process receives only
 bootstrap state lives in `/workspace/.sandherd` with mode `0700`.
 
 For a source-checkout homelab deployment, first install Agent Sandbox, publish
-the control-plane and `agent-runtime` images, create the API principals file and Ed25519
+the control-plane, `agent-runtime`, and `codex-runtime` images, create the API principals file and Ed25519
 key files described in the [terminal gateway guide](terminal-gateway.md), then
 run:
 
 ```sh
 CONTROL_PLANE_IMAGE=registry.example/sandherd-control-plane:dev \
 AGENT_RUNTIME_IMAGE=registry.example/sandherd-agent-runtime:dev \
+CODEX_RUNTIME_IMAGE=registry.example/sandherd-codex-runtime:0.146.0 \
 SANDHERD_API_PRINCIPALS_FILE=/secure/path/principals.json \
 SANDHERD_CAPABILITY_PRIVATE_KEY_FILE=/secure/path/capability-private-key.pem \
 SANDHERD_CAPABILITY_PUBLIC_KEY_FILE=/secure/path/capability-public-key.pem \
@@ -23,9 +24,11 @@ SANDHERD_CAPABILITY_PUBLIC_KEY_FILE=/secure/path/capability-public-key.pem \
 ```
 
 The script requires the explicit `admin@homelab` context by default, creates or
-updates only the named Sandherd Secret/ConfigMap, replaces the two development
+updates only the named Sandherd Secret/ConfigMap, replaces the three development
 image references, applies the homelab overlay, and waits for readiness. Set
 `DRY_RUN=client` or `DRY_RUN=server` to validate without persisting changes.
+The Codex credential coordinator is installed but remains unready until the
+one-time flow in the [Codex operator guide](codex.md) is completed.
 
 ## Storage profiles
 

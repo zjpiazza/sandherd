@@ -6,7 +6,7 @@
       "token": "replace-with-at-least-32-random-characters",
       "permissions": ["control"],
       "secretProfiles": ["personal"],
-      "credentialProfiles": ["personal"]
+      "credentialProfiles": ["personal", "chatgpt-subscription"]
     },
     {
       "id": "replace-with-an-observer-id",

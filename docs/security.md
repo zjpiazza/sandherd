@@ -12,6 +12,7 @@ credential.
 | API client | Untrusted except for its bearer credential. A principal can see only Agents whose persisted owner equals its stable ID. |
 | Tailscale | Private transport to the control-plane Service, not application identity. The API still requires a bearer credential on REST, SSE, and WebSocket requests. |
 | Control plane | Trusted. It authenticates clients, enforces ownership and role, maps public profiles to cluster policy, and holds the namespace-scoped Kubernetes and capability-signing credentials. |
+| Codex credential coordinator | Trusted subscription-auth authority. It alone holds the ChatGPT refresh token on a dedicated RWO PVC and distributes refresh-token-free snapshots over a private, label-restricted Service. |
 | Agent Sandbox router | Trusted only to authenticate its Kubernetes caller and route to the named sandbox. It cannot create workloads or read Secrets. |
 | Runner and agent sandbox | Potentially compromised. They receive no service-account token and no client/control-plane credential. The runner has only the public capability verification key; a terminal request carries a single-use capability for one Agent and operation. |
 | Kubernetes control plane | Trusted platform boundary. Namespace RBAC, admission, CNI policy, storage, and optional stronger runtimes enforce the sandbox boundary. |
@@ -70,7 +71,10 @@ credential mode, command, and health check; these values never appear in the
 adapter discovery response. The runner discards all health-check output and
 returns a fixed failure message. Refreshable OAuth/subscription state belongs
 in adapter-specific durable state, never in the repository checkout. See the
-[adapter guide](adapters.md).
+[adapter guide](adapters.md). For Codex, only the platform coordinator receives
+refresh authority; each sandbox receives an isolated local access-token
+snapshot and cannot write the coordinator PVC. See the [Codex operator
+guide](codex.md).
 
 ## Kubernetes and network isolation
 
@@ -123,6 +127,9 @@ metrics expose only counts, durations, and byte totals.
   only failed/new bootstrap init containers. It never becomes a client token.
 - Router credential: Kubernetes rotates the bound service-account token. Do not
   copy it outside the control-plane Pod.
+- Codex subscription credential: re-run the operator device login against the
+  single coordinator. Its sidecars update each Agent's local snapshot; do not
+  mount the coordinator PVC into a sandbox or seed each Agent separately.
 
 For a compromised client token, revoke it, inspect audit records by principal
 and request ID, terminate suspicious attachments, and rotate any repository

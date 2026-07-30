@@ -200,6 +200,51 @@ func TestReconcilerSurfacesStableBootstrapFailure(t *testing.T) {
 	}
 }
 
+func TestReconcilerSurfacesStableCredentialFailureWithoutDetails(t *testing.T) {
+	tests := []struct {
+		name, container, stateField, reason string
+		exitCode                            int64
+	}{
+		{name: "bootstrap unavailable", container: "credential-bootstrap", stateField: "state", exitCode: 41, reason: "credential_unavailable"},
+		{name: "sidecar reauthentication", container: "credential-sync", stateField: "lastState", exitCode: 42, reason: "credential_reauthentication_required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pod := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{}}}
+			field := "initContainerStatuses"
+			if test.container == "credential-sync" {
+				field = "containerStatuses"
+			}
+			status := map[string]any{
+				"name": test.container, test.stateField: map[string]any{"terminated": map[string]any{
+					"exitCode": test.exitCode, "message": "sensitive credential detail",
+				}},
+			}
+			if test.stateField == "lastState" {
+				status["state"] = map[string]any{"waiting": map[string]any{"reason": "CrashLoopBackOff"}}
+			}
+			_ = unstructured.SetNestedSlice(pod.Object, []any{status}, "status", field)
+			reason, message, failed := credentialFailure(pod)
+			if !failed || reason != test.reason || strings.Contains(message, "sensitive") {
+				t.Fatalf("failure reason=%q message=%q failed=%v", reason, message, failed)
+			}
+		})
+	}
+}
+
+func TestCredentialFailureIgnoresRecoveredContainerLastState(t *testing.T) {
+	pod := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{}}}
+	_ = unstructured.SetNestedSlice(pod.Object, []any{map[string]any{
+		"name":      "credential-sync",
+		"state":     map[string]any{"running": map[string]any{"startedAt": "2026-07-30T00:00:00Z"}},
+		"lastState": map[string]any{"terminated": map[string]any{"exitCode": int64(42)}},
+	}}, "status", "containerStatuses")
+
+	if reason, message, failed := credentialFailure(pod); failed {
+		t.Fatalf("recovered container reported failure reason=%q message=%q", reason, message)
+	}
+}
+
 func TestReconcilerRejectsUnapprovedWorkspaceProfilesBeforeCreatingClaim(t *testing.T) {
 	tests := []struct {
 		name       string

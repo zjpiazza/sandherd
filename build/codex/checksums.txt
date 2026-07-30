@@ -1,0 +1,2 @@
+0ad69792208dd46a8486a6eec354293ef54715946e3a60668308ea8f9afc6c0e  codex-x86_64-unknown-linux-musl.zst
+28453d95f8d35913e3789d10daa2b5bcbb82aa6ccc5f07bb66bd764ee1870201  codex-aarch64-unknown-linux-musl.zst

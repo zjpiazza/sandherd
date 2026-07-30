@@ -12,6 +12,22 @@ data:
       "version": 1,
       "adapters": [
         {
+          "id": "codex",
+          "displayName": "OpenAI Codex",
+          "version": "0.146.0",
+          "capabilities": ["interactive", "headless", "session-resume", "mcp", "subscription-auth"],
+          "profiles": [
+            {
+              "sandboxProfile": "standard",
+              "credentialProfile": "chatgpt-subscription",
+              "credentialMode": "mutable",
+              "warmPool": "sandherd-codex",
+              "command": ["/usr/local/bin/codex-launcher", "-c", "cli_auth_credentials_store=\"file\"", "-c", "forced_login_method=\"chatgpt\"", "--dangerously-bypass-approvals-and-sandbox", "--no-alt-screen"],
+              "healthCheck": ["/usr/local/bin/codex", "--version"]
+            }
+          ]
+        },
+        {
           "id": "shell",
           "displayName": "Development shell",
           "version": "1",
