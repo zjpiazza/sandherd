@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 	"github.com/zjpiazza/sandherd/internal/kubernetes"
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -28,22 +28,20 @@ type TerminalGateway interface {
 	Metrics(http.ResponseWriter, *http.Request)
 }
 
-type permissionContextKey struct{}
+type principalContextKey struct{}
 
 type Server struct {
-	repository   *kubernetes.Repository
-	controller   Enqueuer
-	events       *lifecycle.EventBus
-	logger       *slog.Logger
-	token        []byte
-	observeToken []byte
-	owner        string
-	ready        func() bool
-	terminal     TerminalGateway
+	repository    *kubernetes.Repository
+	controller    Enqueuer
+	events        *lifecycle.EventBus
+	logger        *slog.Logger
+	authenticator internalauth.Authenticator
+	ready         func() bool
+	terminal      TerminalGateway
 }
 
-func NewServer(repository *kubernetes.Repository, controller Enqueuer, events *lifecycle.EventBus, logger *slog.Logger, token, observeToken []byte, owner string, ready func() bool, terminal TerminalGateway) *Server {
-	return &Server{repository: repository, controller: controller, events: events, logger: logger, token: token, observeToken: observeToken, owner: owner, ready: ready, terminal: terminal}
+func NewServer(repository *kubernetes.Repository, controller Enqueuer, events *lifecycle.EventBus, logger *slog.Logger, authenticator internalauth.Authenticator, ready func() bool, terminal TerminalGateway) *Server {
+	return &Server{repository: repository, controller: controller, events: events, logger: logger, authenticator: authenticator, ready: ready, terminal: terminal}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -71,15 +69,29 @@ func (s *Server) authenticate(next authenticatedHandler) http.HandlerFunc {
 		}
 		response.Header().Set("X-Request-ID", requestID)
 		value := request.Header.Get("Authorization")
-		provided := strings.TrimPrefix(value, "Bearer ")
-		isControl := strings.HasPrefix(value, "Bearer ") && len(provided) == len(s.token) && subtle.ConstantTimeCompare([]byte(provided), s.token) == 1
-		isObserver := strings.HasPrefix(value, "Bearer ") && len(s.observeToken) > 0 && len(provided) == len(s.observeToken) && subtle.ConstantTimeCompare([]byte(provided), s.observeToken) == 1
-		if !isControl && !isObserver {
+		provided, validBearer := strings.CutPrefix(value, "Bearer ")
+		if !validBearer || provided == "" || strings.ContainsAny(provided, " \t\r\n") {
+			response.Header().Set("WWW-Authenticate", "Bearer")
+			s.audit(request, requestID, "authentication_failed", "", "", "invalid_credential")
 			writeError(response, requestID, lifecycle.NewError(http.StatusUnauthorized, "unauthenticated", "a valid bearer token is required"))
 			return
 		}
-		request = request.WithContext(context.WithValue(request.Context(), permissionContextKey{}, isControl))
-		next(response, request, s.owner, requestID)
+		principal, err := s.authenticator.Authenticate(request.Context(), provided)
+		if errors.Is(err, internalauth.ErrUnavailable) {
+			s.audit(request, requestID, "authentication_unavailable", "", "", "credential_backend_unavailable")
+			result := lifecycle.NewError(http.StatusServiceUnavailable, "authentication_unavailable", "authentication is temporarily unavailable")
+			result.Retryable = true
+			writeError(response, requestID, result)
+			return
+		}
+		if err != nil || principal.ID == "" || !principal.CanObserve() {
+			response.Header().Set("WWW-Authenticate", "Bearer")
+			s.audit(request, requestID, "authentication_failed", "", "", "invalid_credential")
+			writeError(response, requestID, lifecycle.NewError(http.StatusUnauthorized, "unauthenticated", "a valid bearer token is required"))
+			return
+		}
+		request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, principal))
+		next(response, request, principal.ID, requestID)
 	}
 }
 
@@ -105,6 +117,7 @@ func (s *Server) handleAgents(response http.ResponseWriter, request *http.Reques
 
 func (s *Server) createAgent(response http.ResponseWriter, request *http.Request, owner, requestID string) {
 	if !hasControlPermission(request) {
+		s.audit(request, requestID, "authorization_denied", owner, "", "control_permission_required")
 		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_role", "control permission is required"))
 		return
 	}
@@ -119,6 +132,11 @@ func (s *Server) createAgent(response http.ResponseWriter, request *http.Request
 		return
 	}
 	create.ApplyDefaults()
+	if create.Spec.SecretProfile != "" && !principalFromRequest(request).AllowsSecretProfile(create.Spec.SecretProfile) {
+		s.audit(request, requestID, "authorization_denied", owner, "", "secret_profile_not_allowed")
+		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_secret_profile", "the requested secret profile is not permitted"))
+		return
+	}
 	if err := create.Validate(); err != nil {
 		writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", err.Error()))
 		return
@@ -201,6 +219,9 @@ func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request
 			return
 		}
 		if err := s.terminal.ServeTerminal(response, request, owner, tail, requestID, hasControlPermission(request)); err != nil {
+			if errorCode(err) == "agent_not_found" {
+				s.audit(request, requestID, "agent_access_denied", owner, tail, "not_owned_or_missing")
+			}
 			writeAnyError(response, requestID, err)
 		}
 		return
@@ -217,6 +238,9 @@ func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request
 	case http.MethodGet:
 		agent, err := s.repository.Get(request.Context(), owner, tail)
 		if err != nil {
+			if errorCode(err) == "agent_not_found" {
+				s.audit(request, requestID, "agent_access_denied", owner, tail, "not_owned_or_missing")
+			}
 			writeAnyError(response, requestID, err)
 			return
 		}
@@ -231,11 +255,15 @@ func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request
 
 func (s *Server) mutateAgent(response http.ResponseWriter, request *http.Request, owner, requestID, id, operation string) {
 	if !hasControlPermission(request) {
+		s.audit(request, requestID, "authorization_denied", owner, id, "control_permission_required")
 		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_role", "control permission is required"))
 		return
 	}
 	agent, err := s.repository.Get(request.Context(), owner, id)
 	if err != nil {
+		if errorCode(err) == "agent_not_found" {
+			s.audit(request, requestID, "agent_access_denied", owner, id, "not_owned_or_missing")
+		}
 		writeAnyError(response, requestID, err)
 		return
 	}
@@ -290,7 +318,11 @@ func (s *Server) mutateAgent(response http.ResponseWriter, request *http.Request
 }
 
 func hasControlPermission(request *http.Request) bool {
-	value, _ := request.Context().Value(permissionContextKey{}).(bool)
+	return principalFromRequest(request).CanControl()
+}
+
+func principalFromRequest(request *http.Request) internalauth.Principal {
+	value, _ := request.Context().Value(principalContextKey{}).(internalauth.Principal)
 	return value
 }
 
@@ -378,6 +410,32 @@ func writeAnyError(response http.ResponseWriter, requestID string, err error) {
 		return
 	}
 	writeError(response, requestID, lifecycle.NewError(http.StatusInternalServerError, "internal_error", "an internal error occurred"))
+}
+
+func errorCode(err error) string {
+	var typed *lifecycle.Error
+	if errors.As(err, &typed) {
+		return typed.Code
+	}
+	return ""
+}
+
+func (s *Server) audit(request *http.Request, requestID, event, principalID, agentID, reason string) {
+	attributes := []any{
+		"audit_event", event,
+		"outcome", "denied",
+		"request_id", requestID,
+		"method", request.Method,
+		"path", request.URL.Path,
+		"reason", reason,
+	}
+	if principalID != "" {
+		attributes = append(attributes, "principal_id", principalID)
+	}
+	if agentID != "" {
+		attributes = append(attributes, "agent_id", agentID)
+	}
+	s.logger.Warn("security audit", attributes...)
 }
 
 func writeError(response http.ResponseWriter, requestID string, err *lifecycle.Error) {

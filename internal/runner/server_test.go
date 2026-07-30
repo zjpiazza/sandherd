@@ -81,6 +81,15 @@ func TestRunnerAcceptsScopedGatewayCapability(t *testing.T) {
 	if frame.Type != "error" || frame.Code != "forbidden_role" || frame.RequestID != "capability-request" {
 		t.Fatalf("capability response = %#v", frame)
 	}
+	replayed, replayResponse, replayErr := websocket.Dial(ctx, "ws"+strings.TrimPrefix(httpServer.URL, "http")+"/v1alpha1/terminal", &websocket.DialOptions{
+		HTTPHeader: http.Header{internalauth.CapabilityHeader: []string{token}}, Subprotocols: []string{Protocol},
+	})
+	if replayed != nil {
+		_ = replayed.CloseNow()
+	}
+	if replayErr == nil || replayResponse == nil || replayResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("replayed capability response=%v error=%v", replayResponse, replayErr)
+	}
 	controlToken, err := signer.Mint(h.agentID, "control", "capability-control-request")
 	if err != nil {
 		t.Fatal(err)
@@ -93,8 +102,8 @@ func TestRunnerAcceptsScopedGatewayCapability(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusForbidden {
-			t.Fatalf("%s with terminal capability status = %d, want 403", endpoint, response.StatusCode)
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s with terminal capability status = %d, want 401", endpoint, response.StatusCode)
 		}
 	}
 }

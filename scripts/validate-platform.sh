@@ -54,7 +54,12 @@ for required in \
   'workingDir: /workspace' \
   'volumeClaimTemplatesPolicy: Allowed' \
   'automountServiceAccountToken: false' \
-  'name: capability-public-key'; do
+  'name: capability-public-key' \
+  'cidr: 0.0.0.0/0' \
+  '10.0.0.0/8' \
+  '100.64.0.0/10' \
+  '169.254.0.0/16' \
+  '192.168.0.0/16'; do
   if ! grep -q -- "$required" "$rendered"; then
     printf 'rendered agent runtime is missing: %s\n' "$required" >&2
     exit 1
@@ -71,18 +76,33 @@ if awk '/^      containers:/{inside=1} /^      initContainers:/{inside=0} inside
 fi
 kustomize "$repo_root/deploy/agent-runtime/examples/ssh-credential-profile" >/dev/null
 kustomize "$repo_root/deploy/control-plane" >"$rendered"
-kustomize "$repo_root/deploy/control-plane-homelab" >/dev/null
+kustomize "$repo_root/deploy/control-plane-homelab" >"$rendered"
 
 for required in \
   'name: agents.sandherd.dev' \
   'name: sandherd-control-plane' \
   'resources:' \
-  'sandboxclaims'; do
+  'sandboxclaims' \
+  'name: sandherd-api-principals' \
+  'path: principals.json' \
+  'name: sandherd-control-plane-tailnet' \
+  'loadBalancerClass: tailscale' \
+  'kubernetes.io/metadata.name: tailscale'; do
   if ! grep -q -- "$required" "$rendered"; then
     printf 'rendered control plane is missing: %s\n' "$required" >&2
     exit 1
   fi
 done
+
+if grep -q -- '--owner-id\|--auth-token-file=/var/run/secrets/sandherd/api-token\|name: sandherd-api-token' "$rendered"; then
+  printf '%s\n' 'rendered control plane still uses the legacy shared owner credential' >&2
+  exit 1
+fi
+
+if grep -A20 'name: sandherd-control-plane$' "$rendered" | grep -q 'resources:.*secrets'; then
+  printf '%s\n' 'control-plane Role must not read Kubernetes Secrets' >&2
+  exit 1
+fi
 
 if grep -A80 'kind: Role' "$rendered" | grep -Eq 'resources: \[(deployments|statefulsets|daemonsets|jobs|pods)\].*create'; then
   printf '%s\n' 'control-plane Role can create arbitrary workloads' >&2

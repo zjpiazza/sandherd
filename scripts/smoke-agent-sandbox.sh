@@ -195,7 +195,14 @@ if k --namespace "$namespace" exec "$sandbox_name" --container runner -- \
   printf 'Sandbox unexpectedly reached private node %s.\n' "$node_ip" >&2
   exit 1
 fi
-printf '%s\n' 'Sandbox DNS works while Kubernetes API and private-LAN access are blocked.'
+for blocked_target in 169.254.169.254 100.100.100.100; do
+  if k --namespace "$namespace" exec "$sandbox_name" --container runner -- \
+    nc -z -w 2 "$blocked_target" 443 >/dev/null 2>&1; then
+    printf 'Sandbox unexpectedly reached protected address %s.\n' "$blocked_target" >&2
+    exit 1
+  fi
+done
+printf '%s\n' 'Sandbox DNS works while Kubernetes API, node, metadata, and tailnet access are blocked.'
 
 k --namespace "$namespace" delete sandboxclaim "$claim_name" --wait=true
 k --namespace "$namespace" wait --for=delete "sandbox/$sandbox_name" \

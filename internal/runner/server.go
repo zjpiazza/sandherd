@@ -42,7 +42,10 @@ type capabilityAuthenticator struct {
 }
 
 func (a capabilityAuthenticator) authenticate(request *http.Request) (Permissions, bool) {
-	claims, err := a.verifier.Verify(request.Header.Get(internalauth.CapabilityHeader), a.agentID)
+	if request.Method != http.MethodGet || request.URL.Path != "/v1alpha1/terminal" {
+		return Permissions{}, false
+	}
+	claims, err := a.verifier.VerifyFor(request.Header.Get(internalauth.CapabilityHeader), a.agentID, "terminal")
 	if err != nil {
 		return Permissions{}, false
 	}

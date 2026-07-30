@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -76,16 +77,25 @@ func (s *Signer) Mint(agentID, role, requestID string) (string, error) {
 type Verifier struct {
 	publicKey ed25519.PublicKey
 	now       func() time.Time
+	mu        sync.Mutex
+	used      map[string]int64
 }
 
 func NewVerifier(publicKey ed25519.PublicKey) (*Verifier, error) {
 	if len(publicKey) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("invalid Ed25519 public key")
 	}
-	return &Verifier{publicKey: publicKey, now: time.Now}, nil
+	return &Verifier{publicKey: publicKey, now: time.Now, used: make(map[string]int64)}, nil
 }
 
 func (v *Verifier) Verify(token, expectedAgentID string) (Claims, error) {
+	return v.VerifyFor(token, expectedAgentID, "terminal")
+}
+
+func (v *Verifier) VerifyFor(token, expectedAgentID, expectedScope string) (Claims, error) {
+	if expectedAgentID == "" || expectedScope == "" {
+		return Claims{}, errors.New("capability verification scope is required")
+	}
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return Claims{}, errors.New("capability is malformed")
@@ -118,12 +128,23 @@ func (v *Verifier) Verify(token, expectedAgentID string) (Claims, error) {
 	if claims.Issuer != capabilityIssuer || claims.Audience != capabilityAudience || claims.Subject != expectedAgentID || claims.RequestID == "" || claims.TokenID == "" {
 		return Claims{}, errors.New("capability scope is invalid")
 	}
-	if (claims.Role != "control" && claims.Role != "observe") || claims.Scope != "terminal" {
+	if (claims.Role != "control" && claims.Role != "observe") || claims.Scope != expectedScope {
 		return Claims{}, errors.New("capability role or scope is invalid")
 	}
 	if claims.IssuedAt > now+30 || claims.ExpiresAt <= now || claims.ExpiresAt <= claims.IssuedAt {
 		return Claims{}, errors.New("capability is expired or not yet valid")
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for tokenID, expiresAt := range v.used {
+		if expiresAt <= now {
+			delete(v.used, tokenID)
+		}
+	}
+	if _, replayed := v.used[claims.TokenID]; replayed {
+		return Claims{}, errors.New("capability has already been used")
+	}
+	v.used[claims.TokenID] = claims.ExpiresAt
 	return claims, nil
 }
 
