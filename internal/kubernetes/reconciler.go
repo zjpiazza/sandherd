@@ -2,12 +2,14 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	"github.com/zjpiazza/sandherd/internal/runtimeadapter"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -23,7 +25,7 @@ type Reconciler struct {
 	client           dynamic.Interface
 	repository       *Repository
 	namespace        string
-	profiles         map[string]string
+	adapters         *runtimeadapter.Registry
 	storageProfiles  map[string]string
 	secretProfiles   map[string]string
 	events           EventPublisher
@@ -31,9 +33,9 @@ type Reconciler struct {
 	provisionTimeout time.Duration
 }
 
-func NewReconciler(client dynamic.Interface, repository *Repository, namespace string, profiles map[string]string, events EventPublisher, logger *slog.Logger) *Reconciler {
+func NewReconciler(client dynamic.Interface, repository *Repository, namespace string, adapters *runtimeadapter.Registry, events EventPublisher, logger *slog.Logger) *Reconciler {
 	return &Reconciler{
-		client: client, repository: repository, namespace: namespace, profiles: profiles,
+		client: client, repository: repository, namespace: namespace, adapters: adapters,
 		storageProfiles: map[string]string{"default": ""}, secretProfiles: map[string]string{},
 		events: events, logger: logger, provisionTimeout: 10 * time.Minute,
 	}
@@ -71,10 +73,18 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 		agent.Status.LastTransitionAt != nil && time.Since(*agent.Status.LastTransitionAt) > r.provisionTimeout {
 		return r.transition(ctx, agent, lifecycle.StateFailed, "provisioning_timeout", "sandbox and runner readiness timed out")
 	}
-	pool, approved := r.profiles[agent.Spec.SandboxProfile]
-	if !approved {
-		return r.transition(ctx, agent, lifecycle.StateFailed, "sandbox_profile_not_found", "the sandbox profile is not approved")
+	resolved, err := r.adapters.Resolve(agent.Spec.Kind, agent.Spec.SandboxProfile, agent.Spec.CredentialProfile)
+	if errors.Is(err, runtimeadapter.ErrAdapterNotFound) {
+		return r.transition(ctx, agent, lifecycle.StateFailed, "adapter_not_found", "the requested agent adapter is not installed")
 	}
+	if errors.Is(err, runtimeadapter.ErrProfileNotFound) {
+		return r.transition(ctx, agent, lifecycle.StateFailed, "adapter_profile_not_found", "the requested adapter profile is not installed")
+	}
+	if err != nil {
+		return err
+	}
+	pool := resolved.WarmPool
+	approved := true
 	if agent.Spec.SecretProfile != "" {
 		pool, approved = r.secretProfiles[agent.Spec.SecretProfile]
 		if !approved {
@@ -89,7 +99,20 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	claims := r.client.Resource(SandboxClaimGVR).Namespace(r.namespace)
 	claim, err := claims.Get(ctx, claimName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		claim = sandboxClaimWithStorage(agent, r.namespace, pool, storageClass)
+		if agent.Status.State == lifecycle.StateReconfiguring {
+			oldSandbox, sandboxErr := r.client.Resource(SandboxGVR).Namespace(r.namespace).Get(ctx, claimName, metav1.GetOptions{})
+			if sandboxErr == nil {
+				policy := metav1.DeletePropagationOrphan
+				if deleteErr := r.client.Resource(SandboxGVR).Namespace(r.namespace).Delete(ctx, oldSandbox.GetName(), metav1.DeleteOptions{PropagationPolicy: &policy}); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
+					return mapKubernetesError(deleteErr)
+				}
+				return r.transition(ctx, agent, lifecycle.StateReconfiguring, "adapter_preserving_workspace", "the previous sandbox is releasing the durable workspace")
+			}
+			if !apierrors.IsNotFound(sandboxErr) {
+				return mapKubernetesError(sandboxErr)
+			}
+		}
+		claim = sandboxClaimForRuntime(agent, r.namespace, pool, storageClass, resolved)
 		if _, err = claims.Create(ctx, claim, metav1.CreateOptions{FieldManager: DefaultFieldOwner}); err != nil && !apierrors.IsAlreadyExists(err) {
 			return mapKubernetesError(err)
 		}
@@ -97,6 +120,9 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	}
 	if err != nil {
 		return mapKubernetesError(err)
+	}
+	if !claimMatchesRuntime(claim, agent, resolved, pool) {
+		return r.reconcileRuntimeReplacement(ctx, agent, claim)
 	}
 	if reason, message, failed := failedCondition(claim); failed {
 		r.logger.Warn("sandbox claim reported failure", "agent_id", agent.ID, "reason", reason, "detail", message)
@@ -135,9 +161,42 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 		return r.transition(ctx, agent, lifecycle.StateFailed, "runner_failed", "the runner pod failed")
 	}
 	if conditionTrue(claim, "Ready") && conditionTrue(pod, "Ready") {
+		agent.Status.Runtime = &lifecycle.RuntimeStatus{Generation: agent.RuntimeGeneration, Kind: resolved.AdapterID, AdapterVersion: resolved.AdapterVersion}
 		return r.transition(ctx, agent, lifecycle.StateRunning, "", "")
 	}
 	return r.transition(ctx, agent, lifecycle.StateStarting, "waiting_for_runner", "waiting for runner readiness")
+}
+
+func (r *Reconciler) reconcileRuntimeReplacement(ctx context.Context, agent lifecycle.Agent, claim *unstructured.Unstructured) error {
+	if claim.GetDeletionTimestamp() != nil {
+		return r.transition(ctx, agent, lifecycle.StateReconfiguring, "adapter_rebinding", "the previous runtime sandbox is being removed")
+	}
+	sandboxName, _, _ := unstructured.NestedString(claim.Object, "status", "sandbox", "name")
+	if sandboxName == "" {
+		sandboxName = claimName(agent.ID)
+	}
+	sandbox, err := r.client.Resource(SandboxGVR).Namespace(r.namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err == nil && !conditionTrue(sandbox, "Suspended") {
+		operatingMode, _, _ := unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
+		if operatingMode != "Suspended" {
+			if err := r.patchOperatingMode(ctx, sandboxName, "Suspended"); err != nil {
+				return err
+			}
+		}
+		return r.transition(ctx, agent, lifecycle.StateReconfiguring, "adapter_draining", "the previous adapter runtime is stopping")
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		return mapKubernetesError(err)
+	}
+	// Orphan propagation first releases the deterministic Sandbox from its
+	// claim. A subsequent orphan deletion of that Sandbox atomically preserves
+	// its workspace PVC for adoption by the replacement Sandbox with the same
+	// name, avoiding an owner-reference re-adoption race.
+	policy := metav1.DeletePropagationOrphan
+	if err := r.client.Resource(SandboxClaimGVR).Namespace(r.namespace).Delete(ctx, claim.GetName(), metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil && !apierrors.IsNotFound(err) {
+		return mapKubernetesError(err)
+	}
+	return r.transition(ctx, agent, lifecycle.StateReconfiguring, "adapter_rebinding", "the previous runtime claim is releasing its sandbox")
 }
 
 func (r *Reconciler) reconcileStopped(ctx context.Context, agent lifecycle.Agent) error {
@@ -253,9 +312,23 @@ func sandboxClaim(agent lifecycle.Agent, namespace, pool string) *unstructured.U
 }
 
 func sandboxClaimWithStorage(agent lifecycle.Agent, namespace, pool, storageClass string) *unstructured.Unstructured {
+	return sandboxClaimForRuntime(agent, namespace, pool, storageClass, runtimeadapter.Runtime{
+		AdapterID: agent.Spec.Kind, AdapterVersion: "test", SandboxProfile: agent.Spec.SandboxProfile,
+		CredentialProfile: agent.Spec.CredentialProfile, CredentialMode: runtimeadapter.CredentialNone,
+		WarmPool: pool, Command: []string{"/bin/bash", "--noprofile", "--norc"},
+		HealthCheck: []string{"/bin/bash", "--version"},
+	})
+}
+
+func sandboxClaimForRuntime(agent lifecycle.Agent, namespace, pool, storageClass string, runtime runtimeadapter.Runtime) *unstructured.Unstructured {
 	labels := map[string]any{ManagedLabel: "true", AgentIDLabel: agent.ID, OwnerHashLabel: ownerHash(agent.Owner)}
 	environment := []any{
 		map[string]any{"name": "SANDHERD_AGENT_ID", "value": agent.ID, "containerName": "runner"},
+		map[string]any{"name": "SANDHERD_ADAPTER_ID", "value": runtime.AdapterID, "containerName": "workspace-bootstrap"},
+		map[string]any{"name": "SANDHERD_ADAPTER_ID", "value": runtime.AdapterID, "containerName": "runner"},
+		map[string]any{"name": "SANDHERD_ADAPTER_VERSION", "value": runtime.AdapterVersion, "containerName": "runner"},
+		map[string]any{"name": "SANDHERD_AGENT_COMMAND_JSON", "value": runtime.CommandJSON(), "containerName": "runner"},
+		map[string]any{"name": "SANDHERD_AGENT_HEALTH_CHECK_JSON", "value": runtime.HealthCheckJSON(), "containerName": "runner"},
 	}
 	if agent.Spec.Repository != nil {
 		environment = append(environment,
@@ -273,18 +346,42 @@ func sandboxClaimWithStorage(agent lifecycle.Agent, namespace, pool, storageClas
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "extensions.agents.x-k8s.io/v1beta1",
 		"kind":       "SandboxClaim",
-		"metadata":   map[string]any{"name": claimName(agent.ID), "namespace": namespace, "labels": labels},
+		"metadata": map[string]any{
+			"name": claimName(agent.ID), "namespace": namespace, "labels": labels,
+			"annotations": map[string]any{
+				RuntimeGenerationAnnotation: fmt.Sprintf("%d", agent.RuntimeGeneration),
+				AdapterIDAnnotation:         runtime.AdapterID, AdapterVersionAnnotation: runtime.AdapterVersion,
+			},
+		},
 		"spec": map[string]any{
 			"warmPoolRef":           map[string]any{"name": pool},
 			"lifecycle":             map[string]any{"shutdownPolicy": "DeleteForeground"},
 			"additionalPodMetadata": map[string]any{"labels": labels},
 			"env":                   environment,
 			"volumeClaimTemplates": []any{map[string]any{
-				"metadata": map[string]any{"name": "workspace", "labels": labels},
+				"metadata": map[string]any{"name": "workspace", "labels": mergeMaps(labels, map[string]any{StorageScopeLabel: StorageScopeWorkspace})},
 				"spec":     volumeSpec,
 			}},
 		},
 	}}
+}
+
+func claimMatchesRuntime(claim *unstructured.Unstructured, agent lifecycle.Agent, runtime runtimeadapter.Runtime, pool string) bool {
+	annotations := claim.GetAnnotations()
+	actualPool, _, _ := unstructured.NestedString(claim.Object, "spec", "warmPoolRef", "name")
+	return actualPool == pool && annotations[RuntimeGenerationAnnotation] == fmt.Sprintf("%d", agent.RuntimeGeneration) &&
+		annotations[AdapterIDAnnotation] == runtime.AdapterID && annotations[AdapterVersionAnnotation] == runtime.AdapterVersion
+}
+
+func mergeMaps(first, second map[string]any) map[string]any {
+	result := make(map[string]any, len(first)+len(second))
+	for key, value := range first {
+		result[key] = value
+	}
+	for key, value := range second {
+		result[key] = value
+	}
+	return result
 }
 
 func bootstrapFailure(pod *unstructured.Unstructured) (string, string, bool) {

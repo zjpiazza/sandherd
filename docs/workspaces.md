@@ -3,9 +3,10 @@
 The initial homelab lifecycle and public-clone checks are recorded in the
 [2026-07-30 durable workspace smoke report](platform/durable-workspace-smoke-2026-07-30.md).
 
-Each Sandherd Agent gets one `ReadWriteOnce` PVC mounted at `/workspace`. The
-agent process starts in `/workspace/repository`; Sandherd's private bootstrap
-state lives in `/workspace/.sandherd` with mode `0700`.
+Each Sandherd Agent gets one `ReadWriteOnce` PVC. The bootstrap container sees
+it at `/workspace`, but the agent process receives only
+`/workspace/repository` plus its selected adapter state. Sandherd's private
+bootstrap state lives in `/workspace/.sandherd` with mode `0700`.
 
 For a source-checkout homelab deployment, first install Agent Sandbox, publish
 the control-plane and `agent-runtime` images, create the API principals file and Ed25519
@@ -43,9 +44,12 @@ the logical Agent ID; no Kubernetes name is returned through the public API.
 The standard runtime template in [`deploy/agent-runtime/base`](../deploy/agent-runtime/base)
 allows a claim to inject this PVC but defines no host mount. The bootstrap and
 runner containers use the same numeric user and `fsGroup` so workspace files do
-not require a privileged ownership step. Both containers start in `/workspace`
-so the runtime cannot pre-create `/workspace/repository` as root before the
-unprivileged bootstrap initializes it.
+not require a privileged ownership step. The unprivileged bootstrap initializes
+the fixed paths before the runner starts. The runner mounts repository data at
+`/workspace/repository` and the selected
+`.sandherd/adapters/<adapter-id>` directory at `/home/sandherd`; it does not
+mount the PVC root. This prevents one active adapter from traversing into
+another adapter's state or trusted bootstrap metadata.
 
 ## Bootstrap behavior
 
@@ -71,6 +75,8 @@ interruption after the atomic rename but before the marker write is recovered
 from the matching intent without recloning.
 
 An Agent without `spec.repository` gets an empty `/workspace/repository`.
+Bootstrap also creates the selected adapter state directory on every runtime
+generation, including when repository initialization was already complete.
 
 ## Private repositories
 
@@ -134,6 +140,9 @@ separate secret policy and is not implied by repository bootstrap.
   explicit administrative recovery.
 - Pod replacement, node rescheduling, stop/resume, and control-plane restart do
   not change the PVC or rerun a completed bootstrap.
+- Adapter changes suspend and release the old Sandbox before a new runtime
+  adopts the same PVC. The logical Agent and `WorkspaceSpec` remain unchanged,
+  while adapter-native state stays isolated by adapter ID.
 - Public restore is not implicit: a retained volume is never attached to a
   different Agent merely because names match. An administrator must snapshot or
   clone it into a newly approved workspace. This prevents cross-owner data
@@ -161,5 +170,7 @@ storage. From an attached agent terminal, inspect safe repository state with:
 git -C /workspace/repository remote get-url origin
 git -C /workspace/repository rev-parse HEAD
 git -C /workspace/repository status --short --branch
-cat /workspace/.sandherd/bootstrap.json
 ```
+
+Trusted bootstrap metadata is intentionally outside the runner's mounts and is
+available only through an operator-controlled PVC inspection workflow.

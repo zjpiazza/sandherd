@@ -45,6 +45,7 @@ for permission in \
   'patch agents/status.sandherd.dev sandherd-system' \
   'create sandboxclaims.extensions.agents.x-k8s.io sandherd-system' \
   'patch sandboxes.agents.x-k8s.io sandherd-system' \
+  'delete sandboxes.agents.x-k8s.io sandherd-system' \
   'get pods sandherd-system' \
   'patch persistentvolumeclaims sandherd-system'; do
   set -- $permission

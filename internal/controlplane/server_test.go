@@ -17,6 +17,7 @@ import (
 	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 	cluster "github.com/zjpiazza/sandherd/internal/kubernetes"
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	"github.com/zjpiazza/sandherd/internal/runtimeadapter"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -46,7 +47,7 @@ func (a testAuthenticator) Authenticate(_ context.Context, token string) (intern
 
 func newTestAuthenticator(t *testing.T) testAuthenticator {
 	t.Helper()
-	control, err := internalauth.NewPrincipal("owner", []internalauth.Permission{internalauth.PermissionControl}, []string{"personal"})
+	control, err := internalauth.NewPrincipalWithCredentialProfiles("owner", []internalauth.Permission{internalauth.PermissionControl}, []string{"personal"}, []string{"personal"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +60,29 @@ func newTestAuthenticator(t *testing.T) testAuthenticator {
 		t.Fatal(err)
 	}
 	return testAuthenticator{apiToken: control, observeAPIToken: observer, otherAPIToken: other}
+}
+
+func testAdapterRegistry(t *testing.T) *runtimeadapter.Registry {
+	t.Helper()
+	registry, err := runtimeadapter.New(runtimeadapter.Config{Version: 1, Adapters: []runtimeadapter.Definition{
+		{
+			ID: "codex", DisplayName: "Codex fixture", Version: "test",
+			Capabilities: []runtimeadapter.Capability{runtimeadapter.CapabilityInteractive},
+			Profiles: []runtimeadapter.Profile{
+				{SandboxProfile: "standard", CredentialMode: runtimeadapter.CredentialNone, WarmPool: "pool", Command: []string{"/bin/bash"}, HealthCheck: []string{"/bin/bash", "--version"}},
+				{SandboxProfile: "standard", CredentialProfile: "personal", CredentialMode: runtimeadapter.CredentialMutable, WarmPool: "codex-personal", Command: []string{"/bin/bash"}, HealthCheck: []string{"/bin/bash", "--version"}},
+			},
+		},
+		{
+			ID: "shell-minimal", DisplayName: "Shell fixture", Version: "test",
+			Capabilities: []runtimeadapter.Capability{runtimeadapter.CapabilityInteractive, runtimeadapter.CapabilityHeadless},
+			Profiles:     []runtimeadapter.Profile{{SandboxProfile: "standard", CredentialMode: runtimeadapter.CredentialNone, WarmPool: "shell-pool", Command: []string{"/bin/sh"}, HealthCheck: []string{"/bin/sh", "-c", "exit 0"}}},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
 }
 
 type recordingEnqueuer struct {
@@ -113,7 +137,7 @@ func testAPI(t *testing.T) (*cluster.Repository, *recordingEnqueuer, *lifecycle.
 	repository := cluster.NewRepository(client, "sandherd-system")
 	enqueuer := &recordingEnqueuer{}
 	events := lifecycle.NewEventBus(32)
-	server := NewServer(repository, enqueuer, events, slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, nil)
+	server := NewServer(repository, enqueuer, events, slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, nil, testAdapterRegistry(t))
 	httpServer := httptest.NewServer(server.Handler())
 	t.Cleanup(httpServer.Close)
 	return repository, enqueuer, events, httpServer
@@ -239,12 +263,72 @@ func TestLifecycleAPIValidationFilteringAndErrors(t *testing.T) {
 	assertAPIError(t, badLimit, http.StatusBadRequest, "invalid_limit")
 }
 
+func TestAdapterDiscoveryValidationAndChange(t *testing.T) {
+	_, enqueuer, _, httpServer := testAPI(t)
+	listed := apiRequest(t, http.MethodGet, httpServer.URL+"/v1alpha1/adapters", "", "", "")
+	defer listed.Body.Close()
+	var adapters runtimeadapter.List
+	if listed.StatusCode != http.StatusOK || json.NewDecoder(listed.Body).Decode(&adapters) != nil || len(adapters.Items) != 2 {
+		t.Fatalf("adapter list status=%d value=%#v", listed.StatusCode, adapters)
+	}
+	for _, adapter := range adapters.Items {
+		encoded, _ := json.Marshal(adapter)
+		if strings.Contains(string(encoded), "warmPool") || strings.Contains(string(encoded), "command") || strings.Contains(string(encoded), "credentialProfile") {
+			t.Fatalf("adapter discovery leaked internal configuration: %s", encoded)
+		}
+	}
+
+	created := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", createPayload("rebind"), "rebind-create", "")
+	agent := decodeAgent(t, created)
+	originalWorkspace := agent.Spec.Workspace
+	changed := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents/"+agent.ID+":change-adapter", `{"kind":"shell-minimal"}`, "", "")
+	if changed.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(changed.Body)
+		_ = changed.Body.Close()
+		t.Fatalf("change adapter status=%d body=%s", changed.StatusCode, body)
+	}
+	updated := decodeAgent(t, changed)
+	if updated.ID != agent.ID || updated.Spec.Kind != "shell-minimal" || updated.Spec.Workspace != originalWorkspace || updated.RuntimeGeneration != 2 || updated.Status.State != lifecycle.StateReconfiguring {
+		t.Fatalf("changed agent = %#v", updated)
+	}
+	repeated := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents/"+agent.ID+":change-adapter", `{"kind":"shell-minimal"}`, "", "")
+	if duplicate := decodeAgent(t, repeated); duplicate.RuntimeGeneration != 2 {
+		t.Fatalf("idempotent adapter generation = %d", duplicate.RuntimeGeneration)
+	}
+	unknown := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents/"+agent.ID+":change-adapter", `{"kind":"missing"}`, "", "")
+	assertAPIError(t, unknown, http.StatusUnprocessableEntity, "adapter_not_found")
+
+	enqueuer.mu.Lock()
+	defer enqueuer.mu.Unlock()
+	if len(enqueuer.ids) < 2 || enqueuer.ids[len(enqueuer.ids)-1] != agent.ID {
+		t.Fatalf("adapter change enqueue IDs = %#v", enqueuer.ids)
+	}
+}
+
+func TestAgentCredentialProfileRequiresPrincipalAndInstalledBinding(t *testing.T) {
+	_, _, _, httpServer := testAPI(t)
+	credentialPayload := strings.Replace(createPayload("credentialed"), `"sandboxProfile":"standard"`, `"sandboxProfile":"standard","credentialProfile":"personal"`, 1)
+	allowed := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", credentialPayload, "credential-allowed", "")
+	if allowed.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(allowed.Body)
+		_ = allowed.Body.Close()
+		t.Fatalf("credential profile create status=%d body=%s", allowed.StatusCode, body)
+	}
+	_ = allowed.Body.Close()
+	deniedPayload := strings.Replace(credentialPayload, `"name":"credentialed"`, `"name":"credentialed-other"`, 1)
+	denied := apiRequestAs(t, otherAPIToken, http.MethodPost, httpServer.URL+"/v1alpha1/agents", deniedPayload, "credential-denied", "")
+	assertAPIError(t, denied, http.StatusForbidden, "forbidden_credential_profile")
+	unsupportedPayload := strings.Replace(createPayload("unsupported"), `"kind":"codex","sandboxProfile":"standard"`, `"kind":"shell-minimal","sandboxProfile":"standard","credentialProfile":"personal"`, 1)
+	unsupported := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", unsupportedPayload, "credential-missing", "")
+	assertAPIError(t, unsupported, http.StatusUnprocessableEntity, "adapter_profile_not_found")
+}
+
 func TestAuthenticationBackendUnavailableIsRetryable(t *testing.T) {
 	client := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	authenticator := authenticatorFunc(func(context.Context, string) (internalauth.Principal, error) {
 		return internalauth.Principal{}, internalauth.ErrUnavailable
 	})
-	server := NewServer(cluster.NewRepository(client, "sandherd-system"), &recordingEnqueuer{}, lifecycle.NewEventBus(1), slog.New(slog.NewTextHandler(io.Discard, nil)), authenticator, func() bool { return true }, nil)
+	server := NewServer(cluster.NewRepository(client, "sandherd-system"), &recordingEnqueuer{}, lifecycle.NewEventBus(1), slog.New(slog.NewTextHandler(io.Discard, nil)), authenticator, func() bool { return true }, nil, testAdapterRegistry(t))
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 	response := apiRequestAs(t, apiToken, http.MethodGet, httpServer.URL+"/v1alpha1/agents", "", "", "")
@@ -258,7 +342,7 @@ func TestObserveCredentialIsReadOnlyAndReachesTerminalGateway(t *testing.T) {
 	})
 	repository := cluster.NewRepository(client, "sandherd-system")
 	terminal := &recordingTerminalGateway{}
-	server := NewServer(repository, &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, terminal)
+	server := NewServer(repository, &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, terminal, testAdapterRegistry(t))
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 
@@ -287,7 +371,7 @@ func TestPrincipalsCannotAccessAnotherOwnersAgents(t *testing.T) {
 	created := apiRequest(t, http.MethodPost, initialServer.URL+"/v1alpha1/agents", createPayload("shared-name"), "owner-create", "")
 	agent := decodeAgent(t, created)
 
-	server := NewServer(repository, &recordingEnqueuer{}, events, slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, ownershipTerminalGateway{repository: repository})
+	server := NewServer(repository, &recordingEnqueuer{}, events, slog.New(slog.NewTextHandler(io.Discard, nil)), newTestAuthenticator(t), func() bool { return true }, ownershipTerminalGateway{repository: repository}, testAdapterRegistry(t))
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 
@@ -335,7 +419,7 @@ func TestAuthenticationAuditDoesNotLeakCredential(t *testing.T) {
 		cluster.PodGVR: "PodList", cluster.PVCGVR: "PersistentVolumeClaimList",
 	})
 	var logs bytes.Buffer
-	server := NewServer(cluster.NewRepository(client, "sandherd-system"), &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewJSONHandler(&logs, nil)), newTestAuthenticator(t), func() bool { return true }, nil)
+	server := NewServer(cluster.NewRepository(client, "sandherd-system"), &recordingEnqueuer{}, lifecycle.NewEventBus(16), slog.New(slog.NewJSONHandler(&logs, nil)), newTestAuthenticator(t), func() bool { return true }, nil, testAdapterRegistry(t))
 	httpServer := httptest.NewServer(server.Handler())
 	defer httpServer.Close()
 	canary := "credential-canary-value-that-must-never-be-logged"

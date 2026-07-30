@@ -39,6 +39,25 @@ func TestCreateRequestValidationAndDefaults(t *testing.T) {
 	}
 }
 
+func TestCredentialProfileAndAdapterChangeValidation(t *testing.T) {
+	request := CreateRequest{Name: "agent", Spec: AgentSpec{
+		Kind: "shell", SandboxProfile: "standard", CredentialProfile: "personal",
+		Resources: ResourceSpec{CPU: "1", Memory: "1Gi"},
+		Workspace: WorkspaceSpec{Size: "10Gi", StorageProfile: "default", RetentionPolicy: "retain"},
+	}}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("credential profile rejected: %v", err)
+	}
+	change := ChangeAdapterRequest{Kind: "shell_minimal", CredentialProfile: "personal"}
+	if err := change.Validate(); err != nil {
+		t.Fatalf("adapter change rejected: %v", err)
+	}
+	change.CredentialProfile = "../secret"
+	if err := change.Validate(); err == nil {
+		t.Fatal("unsafe credential profile was accepted")
+	}
+}
+
 func TestRepositoryValidationRejectsCredentialAndOptionInjection(t *testing.T) {
 	request := CreateRequest{Name: "agent", Spec: AgentSpec{
 		Kind: "codex", SandboxProfile: "standard",
@@ -75,5 +94,8 @@ func TestStateTransitionGuards(t *testing.T) {
 	}
 	if !CanResume(StateStopped) || !CanResume(StateRunning) || CanResume(StateFailed) {
 		t.Fatal("resume transition guard is incorrect")
+	}
+	if !CanChangeAdapter(StateRunning) || !CanChangeAdapter(StateStopped) || !CanChangeAdapter(StateFailed) || CanChangeAdapter(StateReconfiguring) || CanChangeAdapter(StateDeleting) {
+		t.Fatal("adapter-change transition guard is incorrect")
 	}
 }

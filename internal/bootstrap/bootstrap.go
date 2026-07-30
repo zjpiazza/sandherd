@@ -47,6 +47,7 @@ func (e *Error) Unwrap() error { return e.Err }
 
 type Options struct {
 	Workspace      string
+	AdapterID      string
 	RepositoryURL  string
 	Revision       string
 	CredentialFile string
@@ -84,6 +85,9 @@ func Execute(ctx context.Context, options Options) (Metadata, error) {
 	}
 	paths, err := preparePaths(options.Workspace)
 	if err != nil {
+		return Metadata{}, err
+	}
+	if err := prepareAdapterState(paths.state, options.AdapterID); err != nil {
 		return Metadata{}, err
 	}
 	lock, err := os.OpenFile(paths.lock, os.O_CREATE|os.O_RDWR, 0o600)
@@ -196,6 +200,9 @@ func applyDefaults(options Options) Options {
 	if options.Revision == "" {
 		options.Revision = "HEAD"
 	}
+	if options.AdapterID == "" {
+		options.AdapterID = "shell"
+	}
 	if options.GitBinary == "" {
 		options.GitBinary = "git"
 	}
@@ -220,6 +227,9 @@ func validateOptions(options Options) error {
 	}
 	if options.Timeout <= 0 {
 		return invalidError("bootstrap timeout must be positive")
+	}
+	if !validAdapterID(options.AdapterID) {
+		return invalidError("adapter ID is invalid")
 	}
 	if options.RepositoryURL == "" {
 		if options.CredentialFile != "" || options.SSHKeyFile != "" || options.KnownHostsFile != "" {
@@ -254,6 +264,29 @@ func validateOptions(options Options) error {
 		}
 	}
 	return nil
+}
+
+func prepareAdapterState(state, adapterID string) error {
+	adapters := filepath.Join(state, "adapters")
+	if err := ensureDirectory(adapters, 0o700); err != nil {
+		return err
+	}
+	if err := ensureDirectory(filepath.Join(adapters, adapterID), 0o700); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validAdapterID(value string) bool {
+	if len(value) < 1 || len(value) > 64 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, character := range value[1:] {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' && character != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func preparePaths(workspace string) (workspacePaths, error) {

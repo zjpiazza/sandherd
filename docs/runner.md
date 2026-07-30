@@ -13,17 +13,25 @@ repository. Bootstrap credentials are not mounted into the runner container.
 
 ## Starting a runner
 
-Create a control token in a mode-restricted file and pass the agent command
-after `--`:
+For local development, create a control token in a mode-restricted file and
+pass an absolute agent command after `--`:
 
 ```sh
-go run ./cmd/runner \
+SANDHERD_AGENT_HEALTH_CHECK_JSON='["/bin/bash","--version"]' \
+  go run ./cmd/runner \
   --agent-id 019c1234-1234-7123-8123-123456789abc \
   --listen 127.0.0.1:8080 \
   --auth-token-file /run/sandherd/control-token \
-  --working-directory /workspace \
-  -- codex
+  --working-directory /workspace/repository \
+  -- /bin/bash
 ```
+
+In production, callers cannot select this command. The trusted adapter registry
+injects `SANDHERD_AGENT_COMMAND_JSON` and
+`SANDHERD_AGENT_HEALTH_CHECK_JSON` into the claim. The runner validates both as
+absolute command arrays, executes the health check for at most ten seconds with
+stdout and stderr discarded, and only then starts the PTY process. See the
+[adapter contract](adapters.md).
 
 The most relevant limits are:
 
@@ -55,7 +63,7 @@ The API is HTTP/1.1 with bearer authentication except for probes:
 | Method and path | Authentication | Behavior |
 | --- | --- | --- |
 | `GET /healthz` | None | Reports that the runner server is alive |
-| `GET /readyz` | None | Reports initialization complete; an exited process remains inspectable |
+| `GET /readyz` | None | Reports process initialization complete; an exited process remains inspectable |
 | `GET /v1alpha1/metadata` | Control or observe | Returns generation, PID, state, timestamps, replay bounds, and exit status |
 | `GET /v1alpha1/terminal` | Control or observe | Upgrades to the `sandherd.terminal.v1alpha1` WebSocket protocol |
 | `POST /v1alpha1/signal` | Control | Sends `SIGHUP`, `SIGINT`, `SIGQUIT`, `SIGTERM`, `SIGUSR1`, or `SIGUSR2` to the process group |

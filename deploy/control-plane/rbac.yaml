@@ -18,7 +18,7 @@ rules:
     verbs: [get, list, watch, create, delete]
   - apiGroups: [agents.x-k8s.io]
     resources: [sandboxes]
-    verbs: [get, list, watch, patch]
+    verbs: [get, list, watch, patch, delete]
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list, watch]

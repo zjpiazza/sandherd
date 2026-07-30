@@ -10,11 +10,33 @@ import (
 	"time"
 
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	"github.com/zjpiazza/sandherd/internal/runtimeadapter"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
+	k8stesting "k8s.io/client-go/testing"
 )
+
+func testAdapterRegistry(t *testing.T, pool string) *runtimeadapter.Registry {
+	t.Helper()
+	registry, err := runtimeadapter.New(runtimeadapter.Config{Version: 1, Adapters: []runtimeadapter.Definition{
+		{
+			ID: "codex", DisplayName: "Codex test adapter", Version: "test",
+			Capabilities: []runtimeadapter.Capability{runtimeadapter.CapabilityInteractive},
+			Profiles:     []runtimeadapter.Profile{{SandboxProfile: "standard", CredentialMode: runtimeadapter.CredentialNone, WarmPool: pool, Command: []string{"/bin/bash"}, HealthCheck: []string{"/bin/bash", "--version"}}},
+		},
+		{
+			ID: "shell-minimal", DisplayName: "Shell test adapter", Version: "test",
+			Capabilities: []runtimeadapter.Capability{runtimeadapter.CapabilityInteractive},
+			Profiles:     []runtimeadapter.Profile{{SandboxProfile: "standard", CredentialMode: runtimeadapter.CredentialNone, WarmPool: pool + "-replacement", Command: []string{"/bin/sh"}, HealthCheck: []string{"/bin/sh", "-c", "exit 0"}}},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
 
 func TestReconcilerLifecycleAndRestartRecovery(t *testing.T) {
 	ctx := context.Background()
@@ -22,7 +44,7 @@ func TestReconcilerLifecycleAndRestartRecovery(t *testing.T) {
 	repository := NewRepository(client, testNamespace)
 	events := lifecycle.NewEventBus(32)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "approved-pool"}, events, logger)
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "approved-pool"), events, logger)
 	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +78,7 @@ func TestReconcilerLifecycleAndRestartRecovery(t *testing.T) {
 
 	// A new reconciler represents a control-plane restart. It observes and adopts
 	// the existing deterministic claim rather than creating another sandbox.
-	restarted := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "approved-pool"}, events, logger)
+	restarted := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "approved-pool"), events, logger)
 	if err := restarted.Reconcile(ctx, agent.ID); err != nil {
 		t.Fatalf("restart reconcile: %v", err)
 	}
@@ -115,7 +137,7 @@ func TestReconcilerInjectsRepositoryAndApprovedStorageWithoutCredentials(t *test
 	ctx := context.Background()
 	client := fakeClient()
 	repository := NewRepository(client, testNamespace)
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "public-pool"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "public-pool"), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	reconciler.ConfigureWorkspaceProfiles(map[string]string{"fast": "rook-ceph-block"}, map[string]string{"private": "private-pool"})
 	request := validCreateRequest("alpha")
 	request.Spec.Repository = &lifecycle.RepositorySpec{URL: "ssh://git@github.com/example/repo.git", Revision: "main"}
@@ -156,7 +178,7 @@ func TestReconcilerSurfacesStableBootstrapFailure(t *testing.T) {
 	ctx := context.Background()
 	client := fakeClient()
 	repository := NewRepository(client, testNamespace)
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	agent, _, _ := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
 	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
 		t.Fatal(err)
@@ -196,7 +218,7 @@ func TestReconcilerRejectsUnapprovedWorkspaceProfilesBeforeCreatingClaim(t *test
 			ctx := context.Background()
 			client := fakeClient()
 			repository := NewRepository(client, testNamespace)
-			reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			request := validCreateRequest("alpha")
 			test.configure(&request)
 			agent, _, err := repository.Create(ctx, "owner", "key", request)
@@ -222,7 +244,7 @@ func TestReconcilerRetainsWorkspaceAndFinalizesDeletion(t *testing.T) {
 	ctx := context.Background()
 	client := fakeClient()
 	repository := NewRepository(client, testNamespace)
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, lifecycle.NewEventBus(8), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), lifecycle.NewEventBus(8), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +288,7 @@ func TestReconcilerRecreatesMissingClaimWithoutDuplicates(t *testing.T) {
 	ctx := context.Background()
 	client := fakeClient()
 	repository := NewRepository(client, testNamespace)
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	agent, _, _ := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
 	_ = reconciler.Reconcile(ctx, agent.ID)
 	_ = client.Resource(SandboxClaimGVR).Namespace(testNamespace).Delete(ctx, claimName(agent.ID), metav1.DeleteOptions{})
@@ -279,11 +301,114 @@ func TestReconcilerRecreatesMissingClaimWithoutDuplicates(t *testing.T) {
 	}
 }
 
+func TestReconcilerChangesAdapterWithoutReplacingWorkspace(t *testing.T) {
+	ctx := context.Background()
+	client := fakeClient()
+	repository := NewRepository(client, testNamespace)
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	sandboxName := claimName(agent.ID)
+	claim, _ := client.Resource(SandboxClaimGVR).Namespace(testNamespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	markClaimReady(t, ctx, client, claim, sandboxName)
+	createReadySandbox(t, ctx, client, agent.ID, sandboxName)
+	pvc := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+		"metadata": map[string]any{
+			"name": "workspace-" + sandboxName, "namespace": testNamespace,
+			"labels":          map[string]any{AgentIDLabel: agent.ID, StorageScopeLabel: StorageScopeWorkspace},
+			"annotations":     map[string]any{"test.sandherd.dev/workspace-canary": "preserved"},
+			"ownerReferences": []any{map[string]any{"apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox", "name": sandboxName, "uid": "old-runtime"}},
+		},
+	}}
+	if _, err := client.Resource(PVCGVR).Namespace(testNamespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	agent, _ = repository.Get(ctx, "owner", agent.ID)
+	originalWorkspace := agent.Spec.Workspace
+	changed, didChange, err := repository.ChangeAdapter(ctx, "owner", agent.ID, "", lifecycle.ChangeAdapterRequest{Kind: "shell-minimal"}, lifecycle.StateReconfiguring)
+	if err != nil || !didChange || changed.RuntimeGeneration != 2 {
+		t.Fatalf("change adapter agent=%#v changed=%v error=%v", changed, didChange, err)
+	}
+
+	// First drain the old runtime.
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	sandbox, _ := client.Resource(SandboxGVR).Namespace(testNamespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	operatingMode, _, _ := unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
+	if operatingMode != "Suspended" {
+		t.Fatalf("old runtime operating mode = %q", operatingMode)
+	}
+	_ = unstructured.SetNestedSlice(sandbox.Object, []any{map[string]any{"type": "Suspended", "status": "True"}}, "status", "conditions")
+	if _, err := client.Resource(SandboxGVR).Namespace(testNamespace).UpdateStatus(ctx, sandbox, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then orphan-delete the old claim and deterministic Sandbox. Kubernetes
+	// leaves the PVC available for the replacement Sandbox to adopt.
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := client.Resource(SandboxClaimGVR).Namespace(testNamespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("replacement claim: %v", err)
+	}
+	pool, _, _ := unstructured.NestedString(replacement.Object, "spec", "warmPoolRef", "name")
+	if pool != "pool-replacement" || replacement.GetAnnotations()[RuntimeGenerationAnnotation] != "2" || replacement.GetAnnotations()[AdapterIDAnnotation] != "shell-minimal" {
+		t.Fatalf("replacement runtime claim = %#v", replacement.Object)
+	}
+	preserved, err := client.Resource(PVCGVR).Namespace(testNamespace).Get(ctx, "workspace-"+sandboxName, metav1.GetOptions{})
+	if err != nil || preserved.GetAnnotations()["test.sandherd.dev/workspace-canary"] != "preserved" {
+		t.Fatalf("workspace was not preserved: pvc=%#v error=%v", preserved, err)
+	}
+	assertOrphanDelete(t, client.Actions(), SandboxClaimGVR.Resource)
+	assertOrphanDelete(t, client.Actions(), SandboxGVR.Resource)
+
+	markClaimReady(t, ctx, client, replacement, sandboxName)
+	createReadySandbox(t, ctx, client, agent.ID, sandboxName)
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	agent, _ = repository.Get(ctx, "owner", agent.ID)
+	if agent.Status.State != lifecycle.StateRunning || agent.Spec.Workspace != originalWorkspace || agent.Status.Runtime == nil || agent.Status.Runtime.Generation != 2 || agent.Status.Runtime.Kind != "shell-minimal" {
+		t.Fatalf("rebound agent = %#v", agent)
+	}
+}
+
+func assertOrphanDelete(t *testing.T, actions []k8stesting.Action, resource string) {
+	t.Helper()
+	for _, action := range actions {
+		if action.GetVerb() != "delete" || action.GetResource().Resource != resource {
+			continue
+		}
+		deletion, ok := action.(k8stesting.DeleteAction)
+		if ok && deletion.GetDeleteOptions().PropagationPolicy != nil && *deletion.GetDeleteOptions().PropagationPolicy == metav1.DeletePropagationOrphan {
+			return
+		}
+	}
+	t.Fatalf("no orphan deletion recorded for %s", resource)
+}
+
 func TestReconcilerMarksProvisioningTimeout(t *testing.T) {
 	ctx := context.Background()
 	client := fakeClient()
 	repository := NewRepository(client, testNamespace)
-	reconciler := NewReconciler(client, repository, testNamespace, map[string]string{"standard": "pool"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	reconciler.provisionTimeout = time.Millisecond
 	agent, _, _ := repository.Create(ctx, "owner", "key", validCreateRequest("alpha"))
 	time.Sleep(2 * time.Millisecond)

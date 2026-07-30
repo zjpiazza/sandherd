@@ -16,6 +16,7 @@ import (
 	internalauth "github.com/zjpiazza/sandherd/internal/auth"
 	"github.com/zjpiazza/sandherd/internal/kubernetes"
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
+	"github.com/zjpiazza/sandherd/internal/runtimeadapter"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -38,10 +39,11 @@ type Server struct {
 	authenticator internalauth.Authenticator
 	ready         func() bool
 	terminal      TerminalGateway
+	adapters      *runtimeadapter.Registry
 }
 
-func NewServer(repository *kubernetes.Repository, controller Enqueuer, events *lifecycle.EventBus, logger *slog.Logger, authenticator internalauth.Authenticator, ready func() bool, terminal TerminalGateway) *Server {
-	return &Server{repository: repository, controller: controller, events: events, logger: logger, authenticator: authenticator, ready: ready, terminal: terminal}
+func NewServer(repository *kubernetes.Repository, controller Enqueuer, events *lifecycle.EventBus, logger *slog.Logger, authenticator internalauth.Authenticator, ready func() bool, terminal TerminalGateway, adapters *runtimeadapter.Registry) *Server {
+	return &Server{repository: repository, controller: controller, events: events, logger: logger, authenticator: authenticator, ready: ready, terminal: terminal, adapters: adapters}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -55,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("/v1alpha1/agents", s.authenticate(s.handleAgents))
 	mux.HandleFunc("/v1alpha1/agents/", s.authenticate(s.handleAgent))
+	mux.HandleFunc("GET /v1alpha1/adapters", s.authenticate(s.handleAdapters))
 	mux.HandleFunc("GET /v1alpha1/events", s.authenticate(s.handleEvents))
 	return mux
 }
@@ -132,11 +135,6 @@ func (s *Server) createAgent(response http.ResponseWriter, request *http.Request
 		return
 	}
 	create.ApplyDefaults()
-	if create.Spec.SecretProfile != "" && !principalFromRequest(request).AllowsSecretProfile(create.Spec.SecretProfile) {
-		s.audit(request, requestID, "authorization_denied", owner, "", "secret_profile_not_allowed")
-		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_secret_profile", "the requested secret profile is not permitted"))
-		return
-	}
 	if err := create.Validate(); err != nil {
 		writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", err.Error()))
 		return
@@ -147,6 +145,13 @@ func (s *Server) createAgent(response http.ResponseWriter, request *http.Request
 			writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", field+" is not a valid Kubernetes quantity"))
 			return
 		}
+	}
+	if !s.authorizeProfiles(response, request, owner, requestID, "", create.Spec.SecretProfile, create.Spec.CredentialProfile) {
+		return
+	}
+	if _, err := s.adapters.Resolve(create.Spec.Kind, create.Spec.SandboxProfile, create.Spec.CredentialProfile); err != nil {
+		writeAdapterError(response, requestID, err)
+		return
 	}
 	agent, created, err := s.repository.Create(request.Context(), owner, key, create)
 	if err != nil {
@@ -204,6 +209,8 @@ func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request
 		tail, operation = strings.TrimSuffix(tail, ":stop"), "stop"
 	} else if strings.HasSuffix(tail, ":resume") {
 		tail, operation = strings.TrimSuffix(tail, ":resume"), "resume"
+	} else if strings.HasSuffix(tail, ":change-adapter") {
+		tail, operation = strings.TrimSuffix(tail, ":change-adapter"), "change-adapter"
 	}
 	if strings.Contains(tail, "/") || !looksLikeUUID(tail) {
 		writeError(response, requestID, lifecycle.NewError(http.StatusNotFound, "agent_not_found", "agent was not found"))
@@ -231,7 +238,11 @@ func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request
 			writeError(response, requestID, lifecycle.NewError(http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed"))
 			return
 		}
-		s.mutateAgent(response, request, owner, requestID, tail, operation)
+		if operation == "change-adapter" {
+			s.changeAdapter(response, request, owner, requestID, tail)
+		} else {
+			s.mutateAgent(response, request, owner, requestID, tail, operation)
+		}
 		return
 	}
 	switch request.Method {
@@ -251,6 +262,84 @@ func (s *Server) handleAgent(response http.ResponseWriter, request *http.Request
 	default:
 		writeError(response, requestID, lifecycle.NewError(http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed"))
 	}
+}
+
+func (s *Server) handleAdapters(response http.ResponseWriter, _ *http.Request, _, _ string) {
+	writeJSON(response, http.StatusOK, s.adapters.List())
+}
+
+func (s *Server) changeAdapter(response http.ResponseWriter, request *http.Request, owner, requestID, id string) {
+	if !hasControlPermission(request) {
+		s.audit(request, requestID, "authorization_denied", owner, id, "control_permission_required")
+		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_role", "control permission is required"))
+		return
+	}
+	var change lifecycle.ChangeAdapterRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, requestID, lifecycle.NewError(http.StatusBadRequest, "invalid_request", err.Error()))
+		return
+	}
+	if err := change.Validate(); err != nil {
+		writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", err.Error()))
+		return
+	}
+	agent, err := s.repository.Get(request.Context(), owner, id)
+	if err != nil {
+		if errorCode(err) == "agent_not_found" {
+			s.audit(request, requestID, "agent_access_denied", owner, id, "not_owned_or_missing")
+		}
+		writeAnyError(response, requestID, err)
+		return
+	}
+	if ifMatch := request.Header.Get("If-Match"); ifMatch != "" && ifMatch != kubernetes.ETag(agent.ResourceVersion) {
+		writeError(response, requestID, lifecycle.NewError(http.StatusPreconditionFailed, "precondition_failed", "the agent changed since it was read"))
+		return
+	}
+	if !s.authorizeProfiles(response, request, owner, requestID, id, agent.Spec.SecretProfile, change.CredentialProfile) {
+		return
+	}
+	if _, err := s.adapters.Resolve(change.Kind, agent.Spec.SandboxProfile, change.CredentialProfile); err != nil {
+		writeAdapterError(response, requestID, err)
+		return
+	}
+	if agent.Spec.Kind != change.Kind || agent.Spec.CredentialProfile != change.CredentialProfile {
+		if !lifecycle.CanChangeAdapter(agent.Status.State) {
+			writeError(response, requestID, lifecycle.NewError(http.StatusConflict, "invalid_state_transition", "the agent adapter cannot be changed from its current state"))
+			return
+		}
+	}
+	transitional := lifecycle.StateReconfiguring
+	if agent.Status.State == lifecycle.StateStopped {
+		transitional = lifecycle.StateStopped
+	}
+	previousKind := agent.Spec.Kind
+	agent, changed, err := s.repository.ChangeAdapter(request.Context(), owner, id, request.Header.Get("If-Match"), change, transitional)
+	if err != nil {
+		writeAnyError(response, requestID, err)
+		return
+	}
+	if changed {
+		s.events.Publish(lifecycle.Event{Type: "agent.adapter_change_requested", AgentID: id, State: transitional, OccurredAt: time.Now().UTC(), RequestID: requestID, Owner: owner})
+		s.logger.Info("agent adapter change requested", "agent_id", id, "previous_adapter", previousKind, "adapter", change.Kind, "runtime_generation", agent.RuntimeGeneration, "request_id", requestID)
+		s.controller.Enqueue(id)
+	}
+	setAgentHeaders(response, agent)
+	writeJSON(response, http.StatusAccepted, agent)
+}
+
+func (s *Server) authorizeProfiles(response http.ResponseWriter, request *http.Request, owner, requestID, agentID, secretProfile, credentialProfile string) bool {
+	principal := principalFromRequest(request)
+	if secretProfile != "" && !principal.AllowsSecretProfile(secretProfile) {
+		s.audit(request, requestID, "authorization_denied", owner, agentID, "secret_profile_not_allowed")
+		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_secret_profile", "the requested repository secret profile is not permitted"))
+		return false
+	}
+	if credentialProfile != "" && !principal.AllowsCredentialProfile(credentialProfile) {
+		s.audit(request, requestID, "authorization_denied", owner, agentID, "credential_profile_not_allowed")
+		writeError(response, requestID, lifecycle.NewError(http.StatusForbidden, "forbidden_credential_profile", "the requested agent credential profile is not permitted"))
+		return false
+	}
+	return true
 }
 
 func (s *Server) mutateAgent(response http.ResponseWriter, request *http.Request, owner, requestID, id, operation string) {
@@ -471,9 +560,20 @@ func looksLikeUUID(value string) bool {
 func validState(state lifecycle.State) bool {
 	switch state {
 	case lifecycle.StateRequested, lifecycle.StateProvisioning, lifecycle.StateStarting, lifecycle.StateRunning,
-		lifecycle.StateStopping, lifecycle.StateStopped, lifecycle.StateFailed, lifecycle.StateDeleting:
+		lifecycle.StateReconfiguring, lifecycle.StateStopping, lifecycle.StateStopped, lifecycle.StateFailed, lifecycle.StateDeleting:
 		return true
 	default:
 		return false
+	}
+}
+
+func writeAdapterError(response http.ResponseWriter, requestID string, err error) {
+	switch {
+	case errors.Is(err, runtimeadapter.ErrAdapterNotFound):
+		writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "adapter_not_found", "the requested agent adapter is not installed"))
+	case errors.Is(err, runtimeadapter.ErrProfileNotFound):
+		writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "adapter_profile_not_found", "the requested adapter, sandbox, and credential profile combination is not installed"))
+	default:
+		writeAnyError(response, requestID, err)
 	}
 }

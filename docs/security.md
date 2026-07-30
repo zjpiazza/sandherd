@@ -31,7 +31,8 @@ every request. Each record has:
 - a stable principal `id`, used as the private Agent owner;
 - a random bearer `token` of 32 to 4096 non-whitespace characters;
 - `observe` or `control` permission (`control` includes observation); and
-- an allowlist of public `secretProfiles`.
+- an allowlist of public repository `secretProfiles`; and
+- an independent allowlist of agent `credentialProfiles`.
 
 Start from [`examples/principals.json`](examples/principals.json), replace every
 placeholder, and keep the result outside the repository with mode `0600`.
@@ -61,6 +62,15 @@ profile mapping must approve it. Repository credentials are mounted only into
 the bootstrap init container. They are absent from the long-running runner and
 Agent process. Secret values and terminal frames are excluded from API errors,
 events, metrics, traces, and structured logs.
+
+An agent `credentialProfile` is separately allowlisted and must match an
+installed adapter binding. The trusted adapter registry contains no secret
+contents or public Kubernetes object names. It resolves an approved warm pool,
+credential mode, command, and health check; these values never appear in the
+adapter discovery response. The runner discards all health-check output and
+returns a fixed failure message. Refreshable OAuth/subscription state belongs
+in adapter-specific durable state, never in the repository checkout. See the
+[adapter guide](adapters.md).
 
 ## Kubernetes and network isolation
 

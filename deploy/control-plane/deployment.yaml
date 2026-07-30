@@ -32,11 +32,11 @@ spec:
             - --listen=:8080
             - --namespace=sandherd-system
             - --auth-principals-file=/var/run/secrets/sandherd/principals.json
+            - --adapter-config-file=/etc/sandherd/adapters.json
             - --capability-private-key-file=/var/run/secrets/sandherd/capability-private-key.pem
             - --sandbox-router-url=http://sandbox-router-svc.agent-sandbox-system.svc.cluster.local:8080
             - --sandbox-router-token-file=/var/run/secrets/kubernetes.io/serviceaccount/token
             - --runner-port=8080
-            - --sandbox-profile=standard=sandherd-standard
           ports:
             - name: http
               containerPort: 8080
@@ -61,10 +61,16 @@ spec:
             capabilities:
               drop: [ALL]
           volumeMounts:
+            - name: adapter-config
+              mountPath: /etc/sandherd
+              readOnly: true
             - name: credentials
               mountPath: /var/run/secrets/sandherd
               readOnly: true
       volumes:
+        - name: adapter-config
+          configMap:
+            name: sandherd-adapter-config
         - name: credentials
           projected:
             sources:
