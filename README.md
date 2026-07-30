@@ -58,7 +58,9 @@ Sandherd provides one control plane for creating, observing, and interacting wit
 
 Coding agents need more than short-lived command execution. They need durable filesystems, long-running processes, reconnectable terminals, scoped credentials, resource limits, and strong isolation from both the host and other agents. Sandherd combines those capabilities behind a client-neutral API.
 
-[Herdr](https://herdr.dev/) is the first planned interactive integration, but it is not the platform boundary. CLIs, web applications, IDEs, and automation can use the same lifecycle and terminal APIs.
+[Herdr](https://herdr.dev/) is the first interactive integration, but it is not the platform boundary. CLIs, web applications, IDEs, and automation can use the same lifecycle and terminal APIs.
+
+Coding-agent implementations are integrations too. Sandherd selects a versioned runtime adapter for tools such as Codex, Claude Code, OpenCode, Pi, or Grok Build while keeping the lifecycle API independent of any one tool. The agent harness, its LLM provider, and its credential profile are separate concepts.
 
 ### Architecture
 
@@ -87,6 +89,7 @@ The control plane manages durable agent lifecycle through a REST API. Interactiv
 - **One agent, one sandbox.** Each agent receives an independent runtime, resource budget, and filesystem.
 - **Durable agents, ephemeral attachments.** Closing a terminal must not terminate the agent behind it.
 - **Client-neutral control.** Herdr is an integration, not the infrastructure API.
+- **Agent-neutral runtime.** Tool-specific launch, authentication, session, and health behavior belongs in versioned adapters.
 - **Private by default.** Sandboxes are internal workloads with explicit ingress and controlled egress.
 - **Kubernetes-native lifecycle.** Scheduling, storage, policies, and runtime isolation use existing Kubernetes primitives.
 - **Progressive isolation.** Start with containers and opt into gVisor or Kata Containers where stronger boundaries are required.
@@ -144,12 +147,12 @@ The planned workflow is deliberately independent of any particular user interfac
 
 1. A client requests a new agent from the Sandherd API.
 2. Sandherd creates or claims an isolated Kubernetes sandbox.
-3. A runner starts the selected agent inside a persistent PTY.
+3. A runner starts the selected agent adapter inside a persistent PTY.
 4. Herdr or another client attaches to the terminal stream.
 5. The client can disconnect and reconnect without stopping the agent.
 6. Sandherd suspends, resumes, or deletes the sandbox according to policy.
 
-The first integration will map Herdr panes and agent states onto this lifecycle while keeping Kubernetes credentials out of the Herdr client.
+The Herdr integration maps panes and agent states onto this lifecycle while keeping Kubernetes credentials out of the Herdr client. Selecting Codex, Claude Code, OpenCode, Pi, or Grok Build changes the runtime adapter, not the client-facing lifecycle.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -167,17 +170,31 @@ The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` comman
 
 ## Roadmap
 
-- [ ] Install Agent Sandbox and validate persistent claims
-- [ ] Define the Sandherd agent and attachment APIs
-- [ ] Build the reconnectable sandbox runner
-- [ ] Create, inspect, stop, resume, and delete agents through the control plane
+### Control-plane foundation
+
+- [x] Install Agent Sandbox and validate persistent claims
+- [x] Define the Sandherd agent and attachment APIs
+- [x] Build the reconnectable sandbox runner
+- [x] Create, inspect, stop, resume, and delete agents through the control plane
 - [x] Stream an interactive terminal over WebSocket
 - [x] Ship the first Herdr integration
 - [x] Add PVC-backed agent workspaces
 - [x] Add scoped secrets and default-deny network policies
-- [ ] Add gVisor runtime support
-- [ ] Add warm pools for low-latency agent startup
-- [ ] Publish a Helm chart and GitOps deployment examples
+
+### Agent runtimes
+
+- [ ] Define the provider-neutral adapter and credential framework ([#25](https://github.com/zjpiazza/sandherd/issues/25))
+- [ ] Run Codex with durable ChatGPT subscription authentication ([#26](https://github.com/zjpiazza/sandherd/issues/26))
+- [ ] Support Claude Code, including subscription credentials ([#27](https://github.com/zjpiazza/sandherd/issues/27))
+- [ ] Support OpenCode with selectable model providers ([#28](https://github.com/zjpiazza/sandherd/issues/28))
+- [ ] Support the Pi coding agent with selectable model providers ([#29](https://github.com/zjpiazza/sandherd/issues/29))
+- [ ] Support the xAI Grok Build coding agent ([#30](https://github.com/zjpiazza/sandherd/issues/30))
+
+### Operations and release
+
+- [ ] Add gVisor runtime support ([#11](https://github.com/zjpiazza/sandherd/issues/11))
+- [ ] Add warm pools, suspension, observability, and load tests ([#12](https://github.com/zjpiazza/sandherd/issues/12))
+- [ ] Publish and verify the first packaged release ([#10](https://github.com/zjpiazza/sandherd/issues/10))
 
 See the [open issues][issues-url] for proposed features and known issues.
 
