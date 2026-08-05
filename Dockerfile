@@ -54,7 +54,7 @@ FROM runtime AS workspace-bootstrap
 COPY --from=build /out/workspace-bootstrap /sandherd
 ENTRYPOINT ["/sandherd"]
 
-FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659 AS agent-runtime
+FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS agent-runtime
 RUN apk add --no-cache bash ca-certificates git openssh-client
 COPY --from=build /out/runner /usr/local/bin/sandherd-runner
 COPY --from=build /out/workspace-bootstrap /usr/local/bin/workspace-bootstrap
