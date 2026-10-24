@@ -227,6 +227,82 @@ func TestBridgeSurfacesProtocolUpgradeAndTakeover(t *testing.T) {
 	}
 }
 
+func TestBridgeResetsStaleCursorRejectedDuringAttachment(t *testing.T) {
+	configuration := testConfig(t, "")
+	target, err := url.Parse(startBridgeTestRunner(t, configuration.TokenFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		request.URL.Path = "/v1alpha1/terminal"
+		proxy.ServeHTTP(response, request)
+	}))
+	defer server.Close()
+	configuration.BaseURL = server.URL
+	api, _ := NewClient(configuration, server.Client())
+	store, _ := NewStateStore(t.TempDir())
+	cursor := uint64(1_000_000)
+	state := AgentState{AgentID: bridgeTestAgentID, Name: "resumed", BaseURL: server.URL,
+		PaneID: "w1:p2", RunnerGeneration: "previous-runner", AfterSequence: &cursor}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	input, writer, _ := os.Pipe()
+	defer input.Close()
+	defer writer.Close()
+	outputReader, outputWriter := io.Pipe()
+	defer outputReader.Close()
+	defer outputWriter.Close()
+	bridge, err := NewBridge(BridgeOptions{
+		Config: configuration, API: api, Store: store, Herdr: NewHerdrClient(&recordingCommandRunner{}),
+		AgentID: bridgeTestAgentID, PaneID: state.PaneID, Input: input, Output: outputWriter, Status: io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// A fresh real runner rejects a cursor from the previous process before it
+	// sends "attached", so the bridge cannot first compare runner generations.
+	if err := bridge.runConnection(ctx, &state); !errors.Is(err, errReplayReset) {
+		t.Fatalf("stale attach returned %v, want cursor reset", err)
+	}
+	saved, err := store.Load(bridgeTestAgentID)
+	if err != nil || saved.AfterSequence != nil || state.AfterSequence != nil {
+		t.Fatalf("stale cursor was not cleared durably: %#v, %v", saved, err)
+	}
+	handled := make(chan struct{})
+	go func() {
+		scanner := bufio.NewScanner(outputReader)
+		for scanner.Scan() {
+			if strings.TrimSpace(scanner.Text()) == "handled:after-resume" {
+				close(handled)
+				return
+			}
+		}
+	}()
+	bridge.inputBytes <- []byte("after-resume\n")
+	result := make(chan error, 1)
+	go func() { result <- bridge.runConnection(ctx, &state) }()
+	select {
+	case <-handled:
+	case err := <-result:
+		t.Fatalf("reattachment exited before input was handled: %v", err)
+	case <-ctx.Done():
+		t.Fatal("replacement runner did not handle input")
+	}
+	cancel()
+	select {
+	case <-result:
+	case <-time.After(time.Second):
+		t.Fatal("reattachment did not stop")
+	}
+	if state.RunnerGeneration == "previous-runner" || state.RunnerGeneration == "" {
+		t.Fatalf("replacement runner generation was not saved: %q", state.RunnerGeneration)
+	}
+}
+
 func TestBridgeIdleLeaseSurvivesAndHonorsTakeoverAndCancellation(t *testing.T) {
 	configuration := testConfig(t, "")
 	runnerURL := startBridgeTestRunner(t, configuration.TokenFile)

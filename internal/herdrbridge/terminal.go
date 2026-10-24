@@ -281,6 +281,15 @@ func (b *Bridge) runConnection(ctx context.Context, state *AgentState) error {
 		return err
 	}
 	if first.Type == "error" {
+		// A replacement runner may reject the old cursor before sending an
+		// attached frame, so there is no new generation to compare yet.
+		if first.Code == "replay_cursor_invalid" && state.AfterSequence != nil {
+			state.AfterSequence = nil
+			if err := b.store.Save(*state); err != nil {
+				return err
+			}
+			return errReplayReset
+		}
 		return bridgeProtocolError(first)
 	}
 	if first.Type != "attached" || first.Role != "control" || first.LeaseID == "" {
