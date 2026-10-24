@@ -249,6 +249,8 @@ func TestLifecycleAPIValidationFilteringAndErrors(t *testing.T) {
 	assertAPIError(t, missingKey, http.StatusBadRequest, "invalid_idempotency_key")
 	invalid := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", strings.Replace(createPayload("alpha"), `"cpu":"1"`, `"cpu":"not-a-quantity"`, 1), "key", "")
 	assertAPIError(t, invalid, http.StatusUnprocessableEntity, "validation_failed")
+	tooPrecise := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", strings.Replace(createPayload("alpha"), `"cpu":"1"`, `"cpu":"0.0001"`, 1), "key", "")
+	assertAPIError(t, tooPrecise, http.StatusUnprocessableEntity, "validation_failed")
 	created := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", createPayload("alpha"), "key", "")
 	_ = decodeAgent(t, created)
 	filtered := apiRequest(t, http.MethodGet, httpServer.URL+"/v1alpha1/agents?name=alpha&state=requested&limit=1", "", "", "")

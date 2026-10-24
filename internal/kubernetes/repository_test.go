@@ -12,15 +12,26 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 const testNamespace = "sandherd-system"
 
 func fakeClient(objects ...runtime.Object) *dynamicfake.FakeDynamicClient {
-	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		AgentGVR: "AgentList", SandboxClaimGVR: "SandboxClaimList", SandboxGVR: "SandboxList", PodGVR: "PodList", PVCGVR: "PersistentVolumeClaimList",
+		SandboxTemplateGVR: "SandboxTemplateList", SandboxWarmPoolGVR: "SandboxWarmPoolList",
 	}, objects...)
+	client.PrependReactor("create", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		object := action.(k8stesting.CreateAction).GetObject().(*unstructured.Unstructured)
+		if object.GetUID() == "" {
+			object.SetUID(types.UID(lifecycle.NewID()))
+		}
+		return false, nil, nil
+	})
+	return client
 }
 
 func TestRepositoryResolveRunnerKeepsKubernetesIdentityInternal(t *testing.T) {

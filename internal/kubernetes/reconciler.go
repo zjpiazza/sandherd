@@ -95,6 +95,17 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	if !approved {
 		return r.transition(ctx, agent, lifecycle.StateFailed, "storage_profile_not_found", "the workspace storage profile is not approved")
 	}
+	pool, err = r.ensureResourcePool(ctx, agent, pool)
+	switch {
+	case errors.Is(err, errRuntimeProfileUnavailable):
+		return r.transition(ctx, agent, lifecycle.StateFailed, "runtime_profile_unavailable", "the approved runtime pool or template is unavailable")
+	case errors.Is(err, errRuntimeProfileInvalid):
+		return r.transition(ctx, agent, lifecycle.StateFailed, "runtime_profile_invalid", "the approved runtime template cannot bind the requested resources")
+	case errors.Is(err, errRuntimeBindingConflict):
+		return r.transition(ctx, agent, lifecycle.StateFailed, "runtime_binding_conflict", "the runtime resource binding needs operator attention")
+	case err != nil:
+		return err
+	}
 	claimName := claimName(agent.ID)
 	claims := r.client.Resource(SandboxClaimGVR).Namespace(r.namespace)
 	claim, err := claims.Get(ctx, claimName, metav1.GetOptions{})
@@ -185,6 +196,9 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 		return r.transition(ctx, agent, lifecycle.StateStarting, "runner_restarting", "restarting a completed runner pod")
 	}
 	if conditionTrue(claim, "Ready") && conditionTrue(pod, "Ready") {
+		if _, err := r.cleanupResourcePools(ctx, agent, pool); err != nil {
+			return err
+		}
 		agent.Status.Runtime = &lifecycle.RuntimeStatus{Generation: agent.RuntimeGeneration, Kind: resolved.AdapterID, AdapterVersion: resolved.AdapterVersion}
 		return r.transition(ctx, agent, lifecycle.StateRunning, "", "")
 	}
@@ -211,6 +225,16 @@ func (r *Reconciler) reconcileRuntimeReplacement(ctx context.Context, agent life
 	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return mapKubernetesError(err)
+	}
+	// Suspended can be published before the kubelet has finished deleting
+	// the old Pod. Never orphan its Sandbox or let a replacement adopt the
+	// workspace while that Pod can still be writing to it.
+	_, podErr := r.client.Resource(PodGVR).Namespace(r.namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+	if podErr == nil {
+		return r.transition(ctx, agent, lifecycle.StateReconfiguring, "adapter_draining", "waiting for the previous runner pod to terminate")
+	}
+	if !apierrors.IsNotFound(podErr) {
+		return mapKubernetesError(podErr)
 	}
 	// Orphan propagation first releases the deterministic Sandbox from its
 	// claim. A subsequent orphan deletion of that Sandbox atomically preserves
@@ -271,6 +295,13 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, agent lifecycle.Agent)
 	}
 	if !apierrors.IsNotFound(err) {
 		return mapKubernetesError(err)
+	}
+	clean, err := r.cleanupResourcePools(ctx, agent, "")
+	if err != nil {
+		return err
+	}
+	if !clean {
+		return r.transition(ctx, agent, lifecycle.StateDeleting, "runtime_resources_deleting", "the runtime resources are being deleted")
 	}
 	if r.events != nil {
 		r.events.Publish(lifecycle.Event{Type: "agent.deleted", AgentID: agent.ID, PreviousState: agent.Status.State, OccurredAt: time.Now().UTC(), Owner: agent.Owner})

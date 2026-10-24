@@ -89,6 +89,7 @@ type Agent struct {
 	Generation        int64        `json:"generation"`
 	RuntimeGeneration int64        `json:"runtimeGeneration"`
 	ResourceVersion   string       `json:"-"`
+	ResourceUID       string       `json:"-"`
 	Spec              AgentSpec    `json:"spec"`
 	Status            AgentStatus  `json:"status"`
 	DesiredState      DesiredState `json:"-"`

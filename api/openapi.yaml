@@ -847,12 +847,12 @@ components:
         cpu:
           type: string
           minLength: 1
-          description: Kubernetes-compatible CPU quantity constrained by policy
+          description: Positive CPU quantity in whole millicores, applied as both request and limit to the runner and agent container. Sidecars retain separate operator budgets.
           examples: ['2', 500m]
         memory:
           type: string
           minLength: 1
-          description: Kubernetes-compatible memory quantity constrained by policy
+          description: Positive Kubernetes memory quantity, applied as both request and limit to the runner and agent container. Sidecars retain separate operator budgets.
           examples: [4Gi]
     WorkspaceSpec:
       type: object

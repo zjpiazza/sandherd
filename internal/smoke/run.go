@@ -23,6 +23,7 @@ import (
 	"github.com/zjpiazza/sandherd/internal/lifecycle"
 	"github.com/zjpiazza/sandherd/internal/runner"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -37,6 +38,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	tokenFile := flags.String("token-file", "", "file containing a control principal bearer token")
 	profile := flags.String("sandbox-profile", "standard", "installed shell sandbox profile")
 	storage := flags.String("storage-profile", "default", "approved durable storage profile")
+	cpu := flags.String("cpu", "1", "runner CPU request and limit")
+	memory := flags.String("memory", "2Gi", "runner memory request and limit")
 	timeout := flags.Duration("timeout", 8*time.Minute, "overall test deadline")
 	recoveryContext := flags.String("recovery-context", "", "opt in to completed-Pod fault injection using this Kubernetes context")
 	namespace := flags.String("namespace", "sandherd-system", "namespace for optional recovery checks")
@@ -56,7 +59,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		BaseURL: *baseURL, TokenFile: *tokenFile, PollInterval: time.Second, ReconnectLimit: time.Minute,
 		Create: lifecycle.CreateRequest{Spec: lifecycle.AgentSpec{
 			Kind: "shell", SandboxProfile: *profile,
-			Resources: lifecycle.ResourceSpec{CPU: "1", Memory: "2Gi"},
+			Resources: lifecycle.ResourceSpec{CPU: *cpu, Memory: *memory},
 			Workspace: lifecycle.WorkspaceSpec{Size: "1Gi", StorageProfile: *storage, RetentionPolicy: "delete"},
 		}},
 	}
@@ -122,6 +125,8 @@ func verify(ctx context.Context, api *herdrbridge.Client, configuration herdrbri
 					kubernetes.Resource(cluster.SandboxClaimGVR).Namespace(namespace),
 					kubernetes.Resource(cluster.PodGVR).Namespace(namespace),
 					kubernetes.Resource(cluster.PVCGVR).Namespace(namespace),
+					kubernetes.Resource(cluster.SandboxTemplateGVR).Namespace(namespace),
+					kubernetes.Resource(cluster.SandboxWarmPoolGVR).Namespace(namespace),
 				} {
 					list, err := resource.List(cleanup, metav1.ListOptions{LabelSelector: cluster.AgentIDLabel + "=" + agent.ID})
 					if err != nil {
@@ -157,6 +162,10 @@ func verify(ctx context.Context, api *herdrbridge.Client, configuration herdrbri
 			return err
 		}
 		sandboxName = sandbox.GetName()
+		if err := verifyResources(ctx, kubernetes, namespace, sandboxName, agent.Spec.Resources); err != nil {
+			return err
+		}
+		fmt.Fprintln(output, "running Pod enforces requested CPU and memory")
 	}
 	terminal, err := attach(ctx, api, agent.ID, nil)
 	if err != nil {
@@ -233,8 +242,38 @@ func verify(ctx context.Context, api *herdrbridge.Client, configuration herdrbri
 			return fmt.Errorf("completed-Pod recovery did not preserve the PVC identity")
 		}
 		fmt.Fprintln(output, "completed-Pod recovery preserved the same PVC")
+		if err := verifyResources(ctx, kubernetes, namespace, sandboxName, agent.Spec.Resources); err != nil {
+			return err
+		}
+		fmt.Fprintln(output, "recovered Pod retains requested CPU and memory")
 	}
 	return nil
+}
+
+func verifyResources(ctx context.Context, client dynamic.Interface, namespace, name string, requested lifecycle.ResourceSpec) error {
+	pod, err := client.Resource(cluster.PodGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("cannot read running Pod resource budgets")
+	}
+	containers, _, _ := unstructured.NestedSlice(pod.Object, "spec", "containers")
+	for _, value := range containers {
+		container, ok := value.(map[string]any)
+		if !ok || container["name"] != "runner" {
+			continue
+		}
+		for _, category := range []string{"requests", "limits"} {
+			for key, expected := range map[string]string{"cpu": requested.CPU, "memory": requested.Memory} {
+				actual, _, _ := unstructured.NestedString(container, "resources", category, key)
+				got, gotErr := resource.ParseQuantity(actual)
+				want, wantErr := resource.ParseQuantity(expected)
+				if gotErr != nil || wantErr != nil || got.Cmp(want) != 0 {
+					return fmt.Errorf("runner %s.%s = %q, want %q", category, key, actual, expected)
+				}
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("running Pod has no runner container")
 }
 
 func waitState(ctx context.Context, api *herdrbridge.Client, id string, state lifecycle.State) error {

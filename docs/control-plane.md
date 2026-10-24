@@ -86,7 +86,7 @@ events, isolation boundaries, and rotation procedure.
 [`deploy/control-plane`](../deploy/control-plane) contains the Agent CRD,
 single-replica deployment, service, network policy, and namespace-scoped RBAC.
 The role can manage Sandherd Agents and claims, patch adopted Sandboxes, observe
-runner Pods, and release retained PVCs. It cannot create Pods, Deployments,
+runner Pods, derive runtime templates/pools, and release retained PVCs. It cannot create Pods, Deployments,
 Jobs, or workloads outside `sandherd-system`.
 
 Before applying the deployment, publish the control-plane image, configure an
@@ -117,6 +117,34 @@ repository secret profiles to administrator-approved Kubernetes resources:
 
 See the [adapter operator and contributor guide](adapters.md) for the registry
 schema, capability discovery, upgrades, and safe runtime replacement.
+
+### Resource budgets and runtime updates
+
+`spec.resources.cpu` and `memory` become both the requests and limits of the
+`runner` container, which also runs the agent process. CPU must be positive and
+use whole millicores; memory must be a positive Kubernetes quantity. Init
+containers and credential sidecars keep their separate operator-defined budgets.
+
+Agent Sandbox v0.5.3 has no claim-level container resource override. Sandherd
+therefore derives an immutable, Agent-owned template and zero-replica pool from
+the approved operator template before creating the claim. Only the runner's CPU
+and memory are changed; images, credentials, security contexts, RuntimeClass,
+network policy, and other settings are preserved. Ownership and configuration
+conflicts fail closed. Superseded bindings are removed after the replacement is
+ready, and remaining bindings are removed when the Agent is deleted.
+
+Upgrading an existing deployment to resource enforcement replaces its legacy
+runtime bindings. Apply the updated RBAC before the control-plane image. Each
+running agent briefly disconnects while the old Pod terminates and its
+replacement adopts the same workspace PVC. Source-template changes also trigger
+this replacement. Clients must reconnect; in-memory terminal replay does not
+survive a runner replacement. Agent files survive, and native session continuation
+depends on the selected adapter. Rollback to a pre-enforcement control plane
+replaces the binding again and restores that version's fixed template budgets.
+
+Claim-specific environment and workspace overrides force cold starts in the
+pinned upstream version. These derived pools deliberately have zero spare
+replicas; they do not provide warm-pool latency improvements.
 
 The portable deployment uses the cluster's default StorageClass. The homelab
 overlay maps `default` to `rook-ceph-block`. See the [workspace guide](workspaces.md)

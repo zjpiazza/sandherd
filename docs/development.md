@@ -89,7 +89,10 @@ For an operator regression test, add `--recovery-context admin@homelab`.
 This option uses Kubernetes access to modify only the disposable test Agent's
 stopped Sandbox: its next Pod exits successfully, and the control plane must
 replace that completed Pod automatically. The test checks the workspace PVC
-identity and waits for the test claim, Sandbox, Pod, and PVC to be deleted.
+identity, verifies runner CPU/memory requests and limits before and after
+recovery, and waits for the test claim, Sandbox, Pod, PVC, and derived runtime
+templates/pools to be deleted. Use `--cpu 750m --memory 768Mi` to test budgets
+different from the source-template defaults.
 Use `--namespace` when the installation is outside `sandherd-system`.
 
 This test verifies the shared lifecycle and terminal infrastructure without a

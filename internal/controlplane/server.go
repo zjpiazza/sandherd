@@ -145,6 +145,10 @@ func (s *Server) createAgent(response http.ResponseWriter, request *http.Request
 			writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", field+" is not a valid Kubernetes quantity"))
 			return
 		}
+		if field == "cpu" && parsed.Cmp(*resource.NewMilliQuantity(parsed.MilliValue(), resource.DecimalSI)) != 0 {
+			writeError(response, requestID, lifecycle.NewError(http.StatusUnprocessableEntity, "validation_failed", "cpu must be a whole number of millicores"))
+			return
+		}
 	}
 	if !s.authorizeProfiles(response, request, owner, requestID, "", create.Spec.SecretProfile, create.Spec.CredentialProfile) {
 		return
