@@ -5,6 +5,7 @@ ARG CODEX_VERSION=0.146.0
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS build
 WORKDIR /src
+ENV GOTOOLCHAIN=local GOFLAGS=-p=2
 
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -18,7 +19,9 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-RUN --mount=type=cache,target=/root/.cache/go-build \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=tmpfs,target=/tmp \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -trimpath \
       -ldflags="-s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$VERSION -X github.com/zjpiazza/sandherd/internal/buildinfo.Commit=$COMMIT -X github.com/zjpiazza/sandherd/internal/buildinfo.Date=$BUILD_DATE" \
