@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -108,6 +109,9 @@ func TestReconcilerLifecycleAndRestartRecovery(t *testing.T) {
 	if agent.Status.State != lifecycle.StateStopped || agent.Status.StoppedAt == nil {
 		t.Fatalf("stopped agent = %#v", agent.Status)
 	}
+	if err := client.Resource(PodGVR).Namespace(testNamespace).Delete(ctx, "sandbox-one", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
 
 	agent, err = repository.SetDesired(ctx, "owner", agent.ID, "", lifecycle.DesiredRunning, lifecycle.StateProvisioning)
 	if err != nil {
@@ -121,6 +125,7 @@ func TestReconcilerLifecycleAndRestartRecovery(t *testing.T) {
 	if operatingMode != "Running" {
 		t.Fatalf("resumed sandbox operating mode = %q, want Running", operatingMode)
 	}
+	createReadySandbox(t, ctx, client, agent.ID, "sandbox-one")
 	pod, _ := client.Resource(PodGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
 	_ = unstructured.SetNestedField(pod.Object, "Failed", "status", "phase")
 	_, _ = client.Resource(PodGVR).Namespace(testNamespace).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
@@ -130,6 +135,77 @@ func TestReconcilerLifecycleAndRestartRecovery(t *testing.T) {
 	agent, _ = repository.Get(ctx, "owner", agent.ID)
 	if agent.Status.State != lifecycle.StateFailed || agent.Status.Reason != "runner_failed" {
 		t.Fatalf("failed runner agent = %#v", agent.Status)
+	}
+}
+
+func TestCompletedRunnerRecoveryWaitsForPodDeletionAndSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	client := fakeClient()
+	repository := NewRepository(client, testNamespace)
+	registry := testAdapterRegistry(t, "pool")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	reconciler := NewReconciler(client, repository, testNamespace, registry, nil, logger)
+	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("recovery"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconcile := func() {
+		t.Helper()
+		if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reconcile()
+	claim, err := client.Resource(SandboxClaimGVR).Namespace(testNamespace).Get(ctx, claimName(agent.ID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	markClaimReady(t, ctx, client, claim, "sandbox-one")
+	createReadySandbox(t, ctx, client, agent.ID, "sandbox-one")
+	reconcile()
+	pod, _ := client.Resource(PodGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
+	_ = unstructured.SetNestedField(pod.Object, "Succeeded", "status", "phase")
+	if _, err := client.Resource(PodGVR).Namespace(testNamespace).UpdateStatus(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	reconcile()
+	sandbox, _ := client.Resource(SandboxGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
+	mode, _, _ := unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
+	if mode != "Suspended" {
+		t.Fatalf("completed runner did not trigger suspension: %s", mode)
+	}
+	// Recovery must remain level-based across a control-plane restart, even
+	// when upstream reports Suspended before deletion has actually finished.
+	reconciler = NewReconciler(client, repository, testNamespace, registry, nil, logger)
+	_ = unstructured.SetNestedSlice(sandbox.Object, []any{map[string]any{"type": "Suspended", "status": "True"}}, "status", "conditions")
+	if _, err := client.Resource(SandboxGVR).Namespace(testNamespace).UpdateStatus(ctx, sandbox, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	reconcile()
+	sandbox, _ = client.Resource(SandboxGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
+	mode, _, _ = unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
+	if mode != "Suspended" {
+		t.Fatal("resumed before the completed Pod was removed")
+	}
+	if err := client.Resource(PodGVR).Namespace(testNamespace).Delete(ctx, "sandbox-one", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	reconcile()
+	sandbox, _ = client.Resource(SandboxGVR).Namespace(testNamespace).Get(ctx, "sandbox-one", metav1.GetOptions{})
+	mode, _, _ = unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
+	if mode != "Running" {
+		t.Fatal("did not resume after Pod removal")
+	}
+	createReadySandbox(t, ctx, client, agent.ID, "sandbox-one")
+	reconcile()
+	recovered, _ := repository.Get(ctx, "owner", agent.ID)
+	if recovered.Status.State != lifecycle.StateRunning || recovered.RuntimeGeneration != agent.RuntimeGeneration {
+		t.Fatalf("recovery changed the runtime identity or failed: %#v", recovered)
+	}
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "delete" && (action.GetResource() == SandboxClaimGVR || action.GetResource() == SandboxGVR || action.GetResource() == PVCGVR) {
+			t.Fatalf("recovery deleted a durable resource: %#v", action)
+		}
 	}
 }
 
@@ -197,6 +273,41 @@ func TestReconcilerSurfacesStableBootstrapFailure(t *testing.T) {
 	agent, _ = repository.Get(ctx, "owner", agent.ID)
 	if agent.Status.State != lifecycle.StateFailed || agent.Status.Reason != "workspace_full" {
 		t.Fatalf("bootstrap failure status = %#v", agent.Status)
+	}
+}
+
+func TestReconcilerDoesNotLogUpstreamFailureDetails(t *testing.T) {
+	ctx := context.Background()
+	client := fakeClient()
+	repository := NewRepository(client, testNamespace)
+	var logs bytes.Buffer
+	reconciler := NewReconciler(client, repository, testNamespace, testAdapterRegistry(t, "pool"), nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	agent, _, err := repository.Create(ctx, "owner", "key", validCreateRequest("redaction"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	claim, _ := client.Resource(SandboxClaimGVR).Namespace(testNamespace).Get(ctx, claimName(agent.ID), metav1.GetOptions{})
+	_ = unstructured.SetNestedSlice(claim.Object, []any{map[string]any{
+		"type": "Ready", "status": "False", "reason": "ProviderFailedPrivateDetail",
+		"message": "credential at /private/auth.json: secret-token-value",
+	}}, "status", "conditions")
+	if _, err := client.Resource(SandboxClaimGVR).Namespace(testNamespace).UpdateStatus(ctx, claim, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx, agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	failed, _ := repository.Get(ctx, "owner", agent.ID)
+	if failed.Status.State != lifecycle.StateFailed || failed.Status.Reason != "sandbox_failed" {
+		t.Fatalf("status = %#v", failed.Status)
+	}
+	for _, sensitive := range []string{"PrivateDetail", "/private/auth.json", "secret-token-value"} {
+		if strings.Contains(logs.String(), sensitive) || strings.Contains(failed.Status.Message, sensitive) {
+			t.Fatalf("upstream detail %q reached logs or status", sensitive)
+		}
 	}
 }
 

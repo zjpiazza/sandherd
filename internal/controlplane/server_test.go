@@ -250,9 +250,7 @@ func TestLifecycleAPIValidationFilteringAndErrors(t *testing.T) {
 	invalid := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", strings.Replace(createPayload("alpha"), `"cpu":"1"`, `"cpu":"not-a-quantity"`, 1), "key", "")
 	assertAPIError(t, invalid, http.StatusUnprocessableEntity, "validation_failed")
 	created := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", createPayload("alpha"), "key", "")
-	agent := decodeAgent(t, created)
-	invalidStop := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents/"+agent.ID+":stop", "", "", "")
-	assertAPIError(t, invalidStop, http.StatusConflict, "invalid_state_transition")
+	_ = decodeAgent(t, created)
 	filtered := apiRequest(t, http.MethodGet, httpServer.URL+"/v1alpha1/agents?name=alpha&state=requested&limit=1", "", "", "")
 	defer filtered.Body.Close()
 	var list lifecycle.AgentList
@@ -261,6 +259,32 @@ func TestLifecycleAPIValidationFilteringAndErrors(t *testing.T) {
 	}
 	badLimit := apiRequest(t, http.MethodGet, httpServer.URL+"/v1alpha1/agents?limit=999", "", "", "")
 	assertAPIError(t, badLimit, http.StatusBadRequest, "invalid_limit")
+}
+
+func TestLifecycleAPIStopsUnreadyAndFailedAgents(t *testing.T) {
+	for _, state := range []lifecycle.State{lifecycle.StateRequested, lifecycle.StateProvisioning, lifecycle.StateStarting, lifecycle.StateReconfiguring, lifecycle.StateFailed, lifecycle.StateDeleting} {
+		t.Run(string(state), func(t *testing.T) {
+			repository, _, _, httpServer := testAPI(t)
+			created := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents", createPayload("recovery"), "key", "")
+			agent := decodeAgent(t, created)
+			status := agent.Status
+			status.State = state
+			if _, err := repository.SetStatus(context.Background(), agent.ID, status); err != nil {
+				t.Fatal(err)
+			}
+			stop := apiRequest(t, http.MethodPost, httpServer.URL+"/v1alpha1/agents/"+agent.ID+":stop", "", "", "")
+			if state == lifecycle.StateDeleting {
+				assertAPIError(t, stop, http.StatusConflict, "invalid_state_transition")
+				return
+			}
+			if stop.StatusCode != http.StatusAccepted {
+				t.Fatalf("stop from %s returned %d", state, stop.StatusCode)
+			}
+			if stopped := decodeAgent(t, stop); stopped.Status.State != lifecycle.StateStopping {
+				t.Fatalf("stop state = %s", stopped.Status.State)
+			}
+		})
+	}
 }
 
 func TestAdapterDiscoveryValidationAndChange(t *testing.T) {

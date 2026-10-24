@@ -270,6 +270,9 @@ paths:
         Gracefully terminates the agent process and requests sandbox suspension.
         Terminal disconnect does not invoke this operation. The operation is
         idempotent when the agent is already stopping or stopped.
+        It also accepts requested, provisioning, starting, reconfiguring, and
+        failed agents so an operator can cancel startup or recover a failed
+        runtime by stopping and then resuming it. Deleting agents cannot stop.
       parameters:
         - $ref: '#/components/parameters/AgentId'
         - $ref: '#/components/parameters/IfMatch'

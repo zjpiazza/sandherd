@@ -124,8 +124,10 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	if !claimMatchesRuntime(claim, agent, resolved, pool) {
 		return r.reconcileRuntimeReplacement(ctx, agent, claim)
 	}
-	if reason, message, failed := failedCondition(claim); failed {
-		r.logger.Warn("sandbox claim reported failure", "agent_id", agent.ID, "reason", reason, "detail", message)
+	if _, _, failed := failedCondition(claim); failed {
+		// Upstream condition text can contain provider or bootstrap details.
+		// Keep it out of logs as well as the public status envelope.
+		r.logger.Warn("sandbox claim reported failure", "agent_id", agent.ID)
 		return r.transition(ctx, agent, lifecycle.StateFailed, "sandbox_failed", "sandbox provisioning failed")
 	}
 	sandboxName, _, _ := unstructured.NestedString(claim.Object, "status", "sandbox", "name")
@@ -141,6 +143,16 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	}
 	operatingMode, _, _ := unstructured.NestedString(sandbox.Object, "spec", "operatingMode")
 	if operatingMode == "Suspended" {
+		// Upstream may publish Suspended immediately after requesting Pod
+		// deletion. Wait for the Pod itself to disappear before resuming;
+		// otherwise the controller can adopt the same completed/terminating Pod.
+		_, podErr := r.client.Resource(PodGVR).Namespace(r.namespace).Get(ctx, sandboxName, metav1.GetOptions{})
+		if podErr != nil && !apierrors.IsNotFound(podErr) {
+			return mapKubernetesError(podErr)
+		}
+		if podErr == nil || !conditionTrue(sandbox, "Suspended") {
+			return r.transition(ctx, agent, lifecycle.StateStarting, "runner_restarting", "waiting for the previous runner pod to terminate")
+		}
 		if err := r.patchOperatingMode(ctx, sandboxName, "Running"); err != nil {
 			return err
 		}
@@ -162,6 +174,15 @@ func (r *Reconciler) reconcileRunning(ctx context.Context, agent lifecycle.Agent
 	}
 	if phase == "Failed" {
 		return r.transition(ctx, agent, lifecycle.StateFailed, "runner_failed", "the runner pod failed")
+	}
+	if phase == "Succeeded" {
+		// A node shutdown can leave a completed Pod behind even with
+		// restartPolicy Always. Use the Sandbox controller's suspension path
+		// to replace only that Pod, retaining the claim, Sandbox, and PVC.
+		if err := r.patchOperatingMode(ctx, sandboxName, "Suspended"); err != nil {
+			return err
+		}
+		return r.transition(ctx, agent, lifecycle.StateStarting, "runner_restarting", "restarting a completed runner pod")
 	}
 	if conditionTrue(claim, "Ready") && conditionTrue(pod, "Ready") {
 		agent.Status.Runtime = &lifecycle.RuntimeStatus{Generation: agent.RuntimeGeneration, Kind: resolved.AdapterID, AdapterVersion: resolved.AdapterVersion}

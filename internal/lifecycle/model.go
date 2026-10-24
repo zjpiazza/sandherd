@@ -205,7 +205,12 @@ func ValidName(name string) bool {
 }
 
 func CanStop(state State) bool {
-	return state == StateRunning || state == StateStopping || state == StateStopped
+	switch state {
+	case StateRequested, StateProvisioning, StateStarting, StateRunning, StateReconfiguring, StateStopping, StateStopped, StateFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func CanResume(state State) bool {

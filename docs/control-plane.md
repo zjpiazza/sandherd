@@ -138,6 +138,12 @@ installed Tailscale operator; sandboxes do not join the tailnet.
 
 - API process restarts do not change Agent desired state or replace claims.
 - Missing claims for live Agents are recreated with the same deterministic name.
+- Completed runner Pods are replaced through Sandbox suspension and resume.
+  Recovery waits until the old Pod is gone, preserves the claim and workspace,
+  and continues after a control-plane restart. An explicit stop takes priority.
+- Stop also accepts Agents that are starting, provisioning, reconfiguring, or
+  failed. Stop followed by resume is the operator recovery path for a failed
+  runtime; deleting Agents cannot be stopped.
 - Adapter or adapter-version changes drain the old Sandbox and create a new
   runtime generation against the same workspace PVC.
 - Failed runner Pods and terminal provisioning failures become stable `failed`
