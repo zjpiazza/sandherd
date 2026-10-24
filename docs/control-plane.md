@@ -89,6 +89,11 @@ The role can manage Sandherd Agents and claims, patch adopted Sandboxes, observe
 runner Pods, derive runtime templates/pools, and release retained PVCs. It cannot create Pods, Deployments,
 Jobs, or workloads outside `sandherd-system`.
 
+Keep the control plane at one replica with `Recreate` deployment strategy.
+There is no leader election yet, so overlapping controller versions could
+reconcile different runtime bindings during an upgrade. API and terminal
+connections briefly disconnect during replacement; clients reconnect afterward.
+
 Before applying the deployment, publish the control-plane image, configure an
 approved `SandboxWarmPool`, patch the example image as needed, and create a
 principal file outside the repository from
