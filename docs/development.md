@@ -114,6 +114,14 @@ runs verification, builds both supported Linux architectures, and builds every
 container target for amd64 and arm64. Branch protection should require all jobs
 from the `CI` workflow.
 
+Trusted `release/**` branches also publish all runtime images to GHCR, tagged
+`sha-<full Git commit>`, after repository verification and the Codex
+provenance/vulnerability check pass. Every image includes amd64 and arm64
+manifests, build provenance, and an SBOM. Pull-request and `main` builds do not
+publish images. Deploy using the resulting immutable digest, not a mutable
+branch tag. These image builds are not yet a supported packaged release; the
+Helm chart and install/upgrade acceptance are tracked in issue #10.
+
 `make generated-check` snapshots tracked and untracked content, runs all Go
 generators, and fails only if generation changes that snapshot. There are no
 checked-in generated Go files yet; this guard is in place for future API and
