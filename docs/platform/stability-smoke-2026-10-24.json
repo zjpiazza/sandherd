@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-24T12:19:45.300337+00:00",
+  "context": "admin@homelab",
+  "namespace": "sandherd-system",
+  "controlPlaneCommit": "323270623048cc12e513ad5ac5b69c93528ab964",
+  "controlPlaneImage": "ghcr.io/zjpiazza/sandherd-control-plane@sha256:87569c7c82875df1c10e51f8388a9a66adde6e48bd451702666887ed8a608dee",
+  "imageArchitectures": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "command": "./dist/smoke --base-url http://sandherd.tail0ebb20.ts.net:8080 --token-file <mode-0600-token-file> --recovery-context admin@homelab --timeout 5m",
+  "agentId": "01a16dd8-9dfc-7129-bc52-0c05989aedaf",
+  "workspaceUID": "1290ffd0-66f0-4588-b3cc-a7c243f231a7",
+  "result": "passed",
+  "checks": [
+    "Public API created a disposable shell Agent and isolated workspace.",
+    "WebSocket input executed and produced a unique marker rather than matching terminal echo.",
+    "Output produced while disconnected was replayed on reconnect without changing runner generation.",
+    "Stop/resume replaced the runner and preserved the original workspace canary.",
+    "An operator fixture changed only the stopped test Sandbox; its next Pod really exited with code zero and restartPolicy Never.",
+    "The control plane suspended and resumed the completed Pod automatically; the following Pod ran the real runner.",
+    "The workspace PVC UID and canary survived the completed-Pod recovery.",
+    "Deletion removed the disposable Agent, claim, Sandbox, Pod, and PVC.",
+    "Both preexisting Codex Agents still reported running after the rollout and test."
+  ],
+  "localValidation": [
+    "make verify",
+    "go test -race ./internal/smoke",
+    "docker build --target herdr-gateway"
+  ],
+  "limitations": [
+    "This test covers the shared shell/lifecycle infrastructure, not model inference or credential revocation.",
+    "Resource budget enforcement and automatic idle stopping remain outstanding."
+  ]
+}

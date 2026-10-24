@@ -8,3 +8,5 @@
 !build/
 !build/codex/
 !build/codex/checksums.txt
+!build/herdr-gateway/
+!build/herdr-gateway/**

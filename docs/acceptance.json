@@ -9,8 +9,18 @@
       "url": "https://github.com/zjpiazza/sandherd/issues/10",
       "requirements": "## Goal\n\nShip a reproducible MVP installation that proves the complete flow from a remote Herdr client to one persistent, isolated agent.\n\n## Scope\n\n- Create a versioned Helm chart for the control plane, runner configuration, service accounts, RBAC, services, policies, and optional Tailscale ingress.\n- Reference a pinned, supported Agent Sandbox installation without silently taking ownership of unrelated cluster resources.\n- Publish amd64 and arm64 container images with immutable tags and provenance metadata.\n- Add an end-to-end test that creates an agent, attaches through the public terminal endpoint, disconnects, reconnects, verifies persistence, stops/resumes, and deletes it.\n- Document local, generic Kubernetes, Flux, and homelab/Tailscale deployment paths.\n- Add upgrade, rollback, uninstall, backup, and troubleshooting documentation.\n- Publish checksums, SBOMs, and a changelog for the first pre-release.\n\n## Acceptance criteria\n\n- [ ] A clean supported cluster can install Sandherd with documented commands and no source checkout.\n- [ ] The Herdr end-to-end scenario passes against the installed release.\n- [ ] Tailscale exposes only the Sandherd endpoint; individual agent sandboxes do not join the tailnet.\n- [ ] Installation defaults are private and least-privilege.\n- [ ] Upgrade and rollback preserve running agents and PVCs within documented limits.\n- [ ] Uninstall distinguishes retained user data from disposable control-plane resources.\n- [ ] Images are multi-architecture, non-root, pinned by digest in the release manifest, and include SBOMs.\n- [ ] The README contains working installation and first-agent instructions.\n\n## Test plan\n\n- Install/upgrade/rollback/uninstall on a disposable cluster.\n- Full homelab test through Tailscale and Herdr.\n- Node reschedule, control-plane restart, network interruption, and PVC persistence scenarios.\n\n## Out of scope\n\n- Multi-cluster scheduling.\n- Warm-pool performance targets.\n- General availability guarantees.\n\n## Dependencies\n\n- Depends on #3 through #9: cluster foundation, runner, lifecycle API, terminal gateway, Herdr integration, storage, and MVP security controls.\n",
       "status": "in-progress",
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        {
+          "artifact": "docs/platform/stability-smoke-2026-10-24.json",
+          "proves": "Shared lifecycle, reconnect replay, workspace persistence, completed-Pod recovery and disposable cleanup on the homelab."
+        }
+      ],
+      "remaining": [
+        "Resource budgets must be applied to Pods.",
+        "Versioned Helm chart and release automation/artifacts.",
+        "Install, upgrade, rollback, uninstall and backup verification.",
+        "Herdr/Codex success scenario through released artifacts."
+      ]
     },
     {
       "number": 11,
@@ -46,7 +56,11 @@
       "requirements": "## Outcome\n\nA user can create and destroy autonomous Codex sandboxes without authenticating each agent, using a platform-level ChatGPT subscription identity rather than requiring API billing.\n\n## Scope\n\n- Package a pinned, verified OpenAI Codex CLI release in a Sandherd runtime image.\n- Implement the adapter contract from #25 for interactive PTY startup, headless execution where useful, readiness, graceful shutdown, and native session resume.\n- Keep each agent's CODEX_HOME configuration and sessions isolated from every other agent and from the repository workspace.\n- Bind a protected, durable, writable ChatGPT authentication cache as platform credential state.\n- Bootstrap that state once from an operator-authorized Codex login without printing or committing auth.json.\n- Validate concurrent use and token refresh with multiple disposable sandboxes.\n- Document recovery, revocation, backup exclusion, and reauthentication procedures.\n\n## Authentication design constraint\n\nCodex writes refreshed tokens back to auth.json. Kubernetes Secret projection alone is therefore insufficient as the live credential store. The implementation must use the mutable-credential strategy from #25 and must not give sandboxes Kubernetes Secret-write RBAC.\n\nOpenAI documents copied auth.json for trusted private automation but recommends one machine or serialized use per copy. Concurrent refresh behavior must be tested explicitly; if shared-file refresh is unreliable, introduce a single-writer coordinator rather than requiring per-agent login.\n\n## Acceptance criteria\n\n- [ ] The runtime image reports the pinned Codex version and passes provenance/vulnerability checks used by Sandherd releases.\n- [ ] Creating a Codex agent requires no interactive login after the platform credential is bootstrapped.\n- [ ] Two Codex agents can execute concurrently using the ChatGPT subscription identity.\n- [ ] A forced or naturally observed token refresh remains valid for both agents and for a newly created third agent.\n- [ ] Each agent has isolated config, session history, and workspace state; only the minimum authentication state is shared.\n- [ ] Attach, detach, stop, resume, sandbox recreation, and deletion preserve the documented Codex session behavior.\n- [ ] No OAuth token, auth file content, or credential path appears in API responses, events, or logs.\n- [ ] Revoking the credential produces a stable degraded/error state with an operator-facing remediation message.\n- [ ] A live homelab smoke test is documented.\n\n## Non-goals\n\n- Requiring an OpenAI API key for the initial supported path.\n- Exposing Codex-specific authentication details in the public Agent API.\n- Treating the shared authentication state as part of an agent workspace.\n\n## Dependencies\n\nBlocked by #25. This adapter is required by #13 and must land before the release packaging in #10 is considered complete.\n\n## Upstream references\n\n- https://developers.openai.com/codex/auth\n- https://developers.openai.com/codex/auth/ci-cd-auth\n- https://github.com/openai/codex\n",
       "status": "in-progress",
       "evidence": [],
-      "remaining": []
+      "remaining": [
+        "Validate naturally observed refresh with two concurrent agents and a newly created third agent.",
+        "Validate credential revocation/reauthentication with stable redacted public failures.",
+        "Update and merge PR #33 after live acceptance passes."
+      ]
     },
     {
       "number": 27,
