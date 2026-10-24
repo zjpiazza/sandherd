@@ -110,6 +110,7 @@ for required in \
   'loadBalancerClass: tailscale' \
   'kubernetes.io/metadata.name: tailscale' \
   'name: sandherd-codex-auth' \
+  'publishNotReadyAddresses: true' \
   'storageClassName: rook-ceph-block' \
   'accessModes:' \
   'ReadWriteOnce' \

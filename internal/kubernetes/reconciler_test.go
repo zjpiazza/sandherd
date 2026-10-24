@@ -321,6 +321,7 @@ func TestReconcilerSurfacesStableCredentialFailureWithoutDetails(t *testing.T) {
 	}{
 		{name: "bootstrap unavailable", container: "credential-bootstrap", stateField: "state", exitCode: 41, reason: "credential_unavailable"},
 		{name: "sidecar reauthentication", container: "credential-sync", stateField: "lastState", exitCode: 42, reason: "credential_reauthentication_required"},
+		{name: "sidecar refresh failed", container: "credential-sync", stateField: "lastState", exitCode: 43, reason: "credential_refresh_failed"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -152,6 +152,14 @@ kubectl --context admin@homelab --namespace sandherd-system exec \
   deployment/sandherd-codex-auth -- /usr/local/bin/codex-auth status
 ```
 
+The private coordinator Service publishes its endpoint while credential
+readiness fails, so clients can still receive the specific redacted failure
+reason. The API never serves an expired snapshot. Sync clients reject expired
+snapshots, repair a removed local auth file, and exit with a stable credential
+failure after the configured maximum outage; transient outages within that
+window can use an unexpired snapshot. Kubernetes restarts failed sidecars and
+init containers, allowing a repaired platform credential to restore readiness.
+
 To stop cluster use immediately, scale the coordinator to zero and stop active
 Codex Agents. To clear its cached credential, run `codex logout` in the
 coordinator Pod before scaling it down. Complete account-level revocation in

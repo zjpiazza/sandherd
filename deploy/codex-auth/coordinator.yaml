@@ -123,6 +123,9 @@ metadata:
     app.kubernetes.io/name: sandherd-codex-auth
     app.kubernetes.io/part-of: sandherd
 spec:
+  # Credential errors are served while /readyz is failing. Keep the private
+  # endpoint reachable so sync clients receive the redacted remediation reason.
+  publishNotReadyAddresses: true
   selector:
     app.kubernetes.io/name: sandherd-codex-auth
   ports:

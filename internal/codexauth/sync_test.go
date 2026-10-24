@@ -1,8 +1,10 @@
 package codexauth
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,6 +52,125 @@ func TestSyncClientSeedsAndUpdatesOnlyAuthFile(t *testing.T) {
 	client.Handler(time.Minute).ServeHTTP(probe, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if probe.Code != http.StatusOK {
 		t.Fatalf("readiness = %d %s", probe.Code, probe.Body.String())
+	}
+}
+
+func TestSyncClientRejectsExpiredAndUntrustedStatusWithoutLeaking(t *testing.T) {
+	for _, scenario := range []string{"expired", "untrusted-status", "refresh-failed"} {
+		t.Run(scenario, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				switch scenario {
+				case "expired":
+					response.Header().Set("X-Sandherd-Credential-Status", StatusReady)
+					_, _ = response.Write(testAuthDocument(t, time.Now().Add(-time.Minute), ""))
+				case "untrusted-status":
+					response.Header().Set("X-Sandherd-Credential-Status", "sensitive-token-value /private/auth.json")
+					response.WriteHeader(http.StatusServiceUnavailable)
+				case "refresh-failed":
+					response.Header().Set("X-Sandherd-Credential-Status", StatusRefreshFailed)
+					response.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}))
+			defer server.Close()
+			var logs bytes.Buffer
+			client, err := NewSyncClient(server.URL, filepath.Join(t.TempDir(), "auth.json"), time.Second, slog.New(slog.NewJSONHandler(&logs, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = client.Sync(context.Background())
+			if err == nil || (scenario == "refresh-failed" && err != ErrRefreshFailed) {
+				t.Fatalf("unexpected sync result: %v", err)
+			}
+			probe := httptest.NewRecorder()
+			client.Handler(time.Minute).ServeHTTP(probe, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			if probe.Code != http.StatusServiceUnavailable || strings.Contains(logs.String()+probe.Body.String(), "sensitive-token-value") || strings.Contains(logs.String()+probe.Body.String(), "/private/") {
+				t.Fatal("invalid credential was ready or upstream diagnostics leaked")
+			}
+			if _, err := os.Stat(client.authFile); !os.IsNotExist(err) {
+				t.Fatal("invalid credential was written")
+			}
+		})
+	}
+}
+
+func TestSyncClientRepairsMissingSnapshotAfterNotModified(t *testing.T) {
+	authFile := filepath.Join(t.TempDir(), "master.json")
+	if _, err := writeCredential(authFile, testAuthDocument(t, time.Now().Add(time.Hour), testRefreshToken), true); err != nil {
+		t.Fatal(err)
+	}
+	coordinator, _ := NewCoordinator(authFile, "/bin/true", time.Minute, nil)
+	coordinator.setState(StatusReady, "")
+	server := httptest.NewServer(coordinator.Handler())
+	defer server.Close()
+	client, _ := NewSyncClient(server.URL+"/v1/auth", filepath.Join(t.TempDir(), "auth.json"), time.Second, nil)
+	if err := client.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(client.authFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Sync(context.Background()); err != ErrCredentialUnavailable {
+		t.Fatalf("missing snapshot accepted: %v", err)
+	}
+	if err := client.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(client.authFile); err != nil {
+		t.Fatal("snapshot was not restored")
+	}
+}
+
+func TestSyncClientOutageExitsAfterMaximumStaleness(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+	document := testAuthDocument(t, time.Now().Add(time.Hour), "")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests++
+		if requests == 1 {
+			_, _ = response.Write(document)
+			return
+		}
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client, _ := NewSyncClient(server.URL, filepath.Join(t.TempDir(), "auth.json"), time.Second, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Run(ctx, 5*time.Millisecond, 25*time.Millisecond); err != ErrCredentialUnavailable {
+		t.Fatalf("stale credential did not surface a stable failure: %v", err)
+	}
+}
+
+func TestCredentialRecoversAfterReauthentication(t *testing.T) {
+	authFile := filepath.Join(t.TempDir(), "master.json")
+	if _, err := writeCredential(authFile, testAuthDocument(t, time.Now().Add(time.Hour), testRefreshToken), true); err != nil {
+		t.Fatal(err)
+	}
+	coordinator, _ := NewCoordinator(authFile, "/bin/true", time.Minute, nil)
+	coordinator.setState(StatusReady, "")
+	server := httptest.NewServer(coordinator.Handler())
+	defer server.Close()
+	client, _ := NewSyncClient(server.URL+"/v1/auth", filepath.Join(t.TempDir(), "auth.json"), time.Second, nil)
+	if err := client.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	coordinator.setState(StatusReauthenticationRequired, "")
+	if err := client.Sync(context.Background()); err != ErrReauthenticationRequired {
+		t.Fatalf("revocation not propagated: %v", err)
+	}
+	if _, err := writeCredential(authFile, testAuthDocument(t, time.Now().Add(2*time.Hour), "new-platform-refresh-token"), true); err != nil {
+		t.Fatal(err)
+	}
+	coordinator.setState(StatusReady, "")
+	if err := client.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	probe := httptest.NewRecorder()
+	client.Handler(time.Minute).ServeHTTP(probe, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if probe.Code != http.StatusOK {
+		t.Fatal("repaired credential did not restore readiness")
 	}
 }
 

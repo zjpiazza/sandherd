@@ -90,3 +90,25 @@ func TestCoordinatorStartsUnreadyWithoutCredential(t *testing.T) {
 		t.Fatalf("response status=%d body=%s", response.Code, response.Body.String())
 	}
 }
+
+func TestCoordinatorNeverServesExpiredSnapshotOrNotModified(t *testing.T) {
+	authFile := filepath.Join(t.TempDir(), "auth.json")
+	metadata, err := writeCredential(authFile, testAuthDocument(t, time.Now().Add(-time.Minute), testRefreshToken), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := NewCoordinator(authFile, "/bin/true", time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, etag := range []string{"", metadata.ETag} {
+		coordinator.setState(StatusReady, "")
+		request := httptest.NewRequest(http.MethodGet, "/v1/auth", nil)
+		request.Header.Set("If-None-Match", etag)
+		response := httptest.NewRecorder()
+		coordinator.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusServiceUnavailable || response.Header().Get("X-Sandherd-Credential-Status") != StatusRefreshFailed || strings.Contains(response.Body.String(), "access_token") {
+			t.Fatalf("expired credential response: %d %s", response.Code, response.Body.String())
+		}
+	}
+}

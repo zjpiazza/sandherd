@@ -497,6 +497,8 @@ func credentialFailure(pod *unstructured.Unstructured) (string, string, bool) {
 				return "credential_unavailable", "the agent credential is unavailable; verify the platform credential coordinator", true
 			case 42:
 				return "credential_reauthentication_required", "the agent credential must be reauthenticated by an operator", true
+			case 43:
+				return "credential_refresh_failed", "the platform credential could not refresh; verify the coordinator and reauthenticate if needed", true
 			}
 		}
 	}
