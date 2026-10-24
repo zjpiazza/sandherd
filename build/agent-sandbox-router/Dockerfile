@@ -19,15 +19,19 @@ ARG BUILD_DATE=unknown
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=tmpfs,target=/tmp \
     go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.2 && \
-    go mod download && \
+    go mod download all && \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
-    go build -trimpath \
+    go build -p=2 -trimpath \
       -ldflags="-s -w -X sigs.k8s.io/agent-sandbox/internal/version.gitVersion=$VERSION -X sigs.k8s.io/agent-sandbox/internal/version.gitSHA=$COMMIT -X sigs.k8s.io/agent-sandbox/internal/version.buildDate=$BUILD_DATE" \
       -o /out/sandbox-router ./sandbox-router/cmd
 
 FROM build AS vulnerability-check
-RUN go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary /out/sandbox-router
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=tmpfs,target=/tmp \
+    go run -p=2 golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary /out/sandbox-router
 
 FROM scratch
 COPY --from=build /out/sandbox-router /sandbox-router
