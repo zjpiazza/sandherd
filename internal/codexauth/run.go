@@ -20,6 +20,7 @@ const (
 	exitConfiguration            = 2
 	exitCredentialUnavailable    = 41
 	exitReauthenticationRequired = 42
+	exitRefreshFailed            = 43
 )
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -114,7 +115,7 @@ func runSync(args []string, stderr io.Writer) int {
 	serveError := make(chan error, 1)
 	go func() { serveError <- server.ListenAndServe() }()
 	syncError := make(chan error, 1)
-	go func() { syncError <- client.Run(ctx, *interval) }()
+	go func() { syncError <- client.Run(ctx, *interval, *maxStale) }()
 	select {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -139,6 +140,10 @@ func syncExitCode(err error, stderr io.Writer) int {
 	if errors.Is(err, ErrReauthenticationRequired) {
 		fmt.Fprintln(stderr, "codex-auth: platform credential requires reauthentication")
 		return exitReauthenticationRequired
+	}
+	if errors.Is(err, ErrRefreshFailed) {
+		fmt.Fprintln(stderr, "codex-auth: platform credential refresh failed")
+		return exitRefreshFailed
 	}
 	fmt.Fprintln(stderr, "codex-auth: platform credential is unavailable")
 	return exitCredentialUnavailable
@@ -175,6 +180,10 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stdout, `{"status":"credential_not_ready"}`)
 		return exitCredentialUnavailable
+	}
+	if !metadata.ExpiresAt.After(time.Now()) {
+		fmt.Fprintln(stdout, `{"status":"credential_refresh_failed"}`)
+		return exitRefreshFailed
 	}
 	fmt.Fprintf(stdout, "{\"status\":\"ready\",\"lastRefresh\":%q,\"expiresAt\":%q}\n", metadata.LastRefresh.Format(time.RFC3339), metadata.ExpiresAt.Format(time.RFC3339))
 	return 0

@@ -19,6 +19,10 @@ import (
 	"golang.org/x/term"
 )
 
+// Application-level pings renew the runner's default 30-second controller lease;
+// WebSocket control-frame pings alone do not renew it.
+const terminalKeepaliveInterval = 10 * time.Second
+
 var (
 	errReplayReset       = errors.New("terminal replay cursor reset")
 	errControllerRevoked = errors.New("terminal controller was revoked")
@@ -277,6 +281,15 @@ func (b *Bridge) runConnection(ctx context.Context, state *AgentState) error {
 		return err
 	}
 	if first.Type == "error" {
+		// A replacement runner may reject the old cursor before sending an
+		// attached frame, so there is no new generation to compare yet.
+		if first.Code == "replay_cursor_invalid" && state.AfterSequence != nil {
+			state.AfterSequence = nil
+			if err := b.store.Save(*state); err != nil {
+				return err
+			}
+			return errReplayReset
+		}
 		return bridgeProtocolError(first)
 	}
 	if first.Type != "attached" || first.Role != "control" || first.LeaseID == "" {
@@ -369,6 +382,8 @@ func (b *Bridge) runConnection(ctx context.Context, state *AgentState) error {
 }
 
 func (b *Bridge) writeTerminal(ctx context.Context, connection *websocket.Conn, leaseID string, commands <-chan runner.Frame, result chan<- error) {
+	keepalive := time.NewTicker(terminalKeepaliveInterval)
+	defer keepalive.Stop()
 	for {
 		var frame runner.Frame
 		select {
@@ -378,6 +393,8 @@ func (b *Bridge) writeTerminal(ctx context.Context, connection *websocket.Conn, 
 		case size := <-b.resize:
 			frame = runner.Frame{Type: "resize", LeaseID: leaseID, TerminalSize: &size}
 		case frame = <-commands:
+		case <-keepalive.C:
+			frame = runner.Frame{Type: "ping", Nonce: lifecycle.NewID()}
 		case <-ctx.Done():
 			return
 		}

@@ -139,7 +139,10 @@ Developing Sandherd itself requires Go 1.26 or newer, Node.js 24 for contract va
 
 ### Installation
 
-Installation instructions will be added after the first end-to-end release. The intended installation path is a Helm chart with optional GitOps examples.
+The [pre-release installation guide](docs/installation.md) covers the versioned
+Helm chart, private credentials, optional Codex/Herdr and Tailscale access,
+upgrades, rollback, backups, and data retention. The bundle is under acceptance
+testing and has not yet been published as a supported release.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -186,7 +189,7 @@ The lifecycle `control-plane`, reconnectable `runner`, and `herdr-bridge` comman
 ### Agent runtimes
 
 - [x] Define the provider-neutral adapter and credential framework ([#25](https://github.com/zjpiazza/sandherd/issues/25))
-- [x] Run Codex with durable ChatGPT subscription authentication ([#26](https://github.com/zjpiazza/sandherd/issues/26))
+- [ ] Complete Codex subscription authentication acceptance (live pilot works; refresh/revocation verification remains) ([#26](https://github.com/zjpiazza/sandherd/issues/26))
 - [ ] Support Claude Code, including subscription credentials ([#27](https://github.com/zjpiazza/sandherd/issues/27))
 - [ ] Support OpenCode with selectable model providers ([#28](https://github.com/zjpiazza/sandherd/issues/28))
 - [ ] Support the Pi coding agent with selectable model providers ([#29](https://github.com/zjpiazza/sandherd/issues/29))
@@ -210,7 +213,7 @@ Sandherd is at an early stage, so design feedback and focused prototypes are esp
 
 ## License
 
-The project license has not been selected yet. A license will be added before the first public release.
+Sandherd is licensed under the [Apache License, Version 2.0](LICENSE).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

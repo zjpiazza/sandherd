@@ -89,8 +89,13 @@ func TestRepositoryValidationRejectsCredentialAndOptionInjection(t *testing.T) {
 }
 
 func TestStateTransitionGuards(t *testing.T) {
-	if !CanStop(StateRunning) || !CanStop(StateStopped) || CanStop(StateFailed) {
-		t.Fatal("stop transition guard is incorrect")
+	for _, state := range []State{StateRequested, StateProvisioning, StateStarting, StateRunning, StateReconfiguring, StateStopping, StateStopped, StateFailed} {
+		if !CanStop(state) {
+			t.Fatalf("cannot stop agent in state %s", state)
+		}
+	}
+	if CanStop(StateDeleting) || CanStop(State("unknown")) {
+		t.Fatal("stop accepted a deleting or unknown agent")
 	}
 	if !CanResume(StateStopped) || !CanResume(StateRunning) || CanResume(StateFailed) {
 		t.Fatal("resume transition guard is incorrect")

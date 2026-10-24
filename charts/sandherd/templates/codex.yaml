@@ -1,0 +1,18 @@
+{{- if .Values.codex.enabled -}}
+{{- $root := . -}}
+{{- range $part := splitList "\n---\n" (.Files.Get "files/manifests/codex-auth.yaml") -}}
+{{- $object := fromYaml $part -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $object) -}}
+{{- if eq $object.kind "Deployment" -}}
+{{- $_ := set (first $object.spec.template.spec.containers) "image" $root.Values.images.codexRuntime -}}
+{{- else if eq $object.kind "PersistentVolumeClaim" -}}
+{{- $_ := set $object.metadata "annotations" (dict "helm.sh/resource-policy" "keep") -}}
+{{- $_ := set $object.spec.resources.requests "storage" $root.Values.codex.storageSize -}}
+{{- if $root.Values.storage.className -}}{{- $_ := set $object.spec "storageClassName" $root.Values.storage.className -}}{{- end -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{- end }}
+---
+{{ include "sandherd.network" (dict "root" . "object" (fromYaml (.Files.Get "files/manifests/codex-auth-network.yaml"))) }}
+{{- end }}

@@ -144,6 +144,14 @@ func (c *Coordinator) handleAuth(response http.ResponseWriter, request *http.Req
 		writeSafeJSON(response, http.StatusServiceUnavailable, StatusUnavailable)
 		return
 	}
+	// Maintenance and requests run independently. Never return an expired
+	// snapshot (or a 304 for it) between maintenance ticks.
+	if !metadata.ExpiresAt.After(time.Now()) {
+		c.setState(StatusRefreshFailed, "")
+		response.Header().Set("X-Sandherd-Credential-Status", StatusRefreshFailed)
+		writeSafeJSON(response, http.StatusServiceUnavailable, StatusRefreshFailed)
+		return
+	}
 	if request.Header.Get("If-None-Match") == metadata.ETag {
 		response.WriteHeader(http.StatusNotModified)
 		return

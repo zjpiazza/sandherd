@@ -270,6 +270,9 @@ paths:
         Gracefully terminates the agent process and requests sandbox suspension.
         Terminal disconnect does not invoke this operation. The operation is
         idempotent when the agent is already stopping or stopped.
+        It also accepts requested, provisioning, starting, reconfiguring, and
+        failed agents so an operator can cancel startup or recover a failed
+        runtime by stopping and then resuming it. Deleting agents cannot stop.
       parameters:
         - $ref: '#/components/parameters/AgentId'
         - $ref: '#/components/parameters/IfMatch'
@@ -844,12 +847,12 @@ components:
         cpu:
           type: string
           minLength: 1
-          description: Kubernetes-compatible CPU quantity constrained by policy
+          description: Positive CPU quantity in whole millicores, applied as both request and limit to the runner and agent container. Sidecars retain separate operator budgets.
           examples: ['2', 500m]
         memory:
           type: string
           minLength: 1
-          description: Kubernetes-compatible memory quantity constrained by policy
+          description: Positive Kubernetes memory quantity, applied as both request and limit to the runner and agent container. Sidecars retain separate operator budgets.
           examples: [4Gi]
     WorkspaceSpec:
       type: object

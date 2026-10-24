@@ -1,0 +1,60 @@
+name: Publish pre-release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      packages: write
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install verified Helm
+        run: |
+          ./scripts/install-helm.sh "$RUNNER_TEMP/sandherd-tools"
+          echo "$RUNNER_TEMP/sandherd-tools" >> "$GITHUB_PATH"
+
+      - name: Validate release identity and license
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,re
+          version=json.loads(pathlib.Path('release/images.lock.json').read_text())['version']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+-alpha\.\d+',os.environ['RELEASE_TAG']) or os.environ['RELEASE_TAG'] != 'v'+version:
+              raise SystemExit('Tag must match the alpha version in the image lock and chart.')
+          if not pathlib.Path('LICENSE').is_file():
+              raise SystemExit('Select and commit the project LICENSE before publication.')
+          PY
+
+      - name: Build verified release bundle
+        run: python3 scripts/package-release.py --require-license
+
+      - name: Publish pre-release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" --verify-tag --prerelease \
+            --title "Sandherd $RELEASE_TAG" --notes-file CHANGELOG.md dist/release/*

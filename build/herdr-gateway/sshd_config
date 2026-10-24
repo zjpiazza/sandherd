@@ -1,0 +1,27 @@
+Port 2222
+ListenAddress 0.0.0.0
+ListenAddress ::
+HostKey /tmp/sandherd-herdr/ssh_host_ed25519_key
+PidFile /tmp/sandherd-herdr/sshd.pid
+AuthorizedKeysFile .ssh/authorized_keys
+AllowUsers sandherd
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+StrictModes yes
+DisableForwarding yes
+AllowAgentForwarding no
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+PermitTunnel no
+X11Forwarding no
+PermitUserEnvironment no
+PermitUserRC no
+PrintMotd no
+UseDNS no
+LogLevel INFO
+SetEnv PATH=/usr/local/bin:/usr/bin:/bin HOME=/home/sandherd SHELL=/bin/bash XDG_RUNTIME_DIR=/tmp/sandherd-herdr SANDHERD_CONFIG_FILE=/etc/sandherd/config.json HERDR_PLUGIN_STATE_DIR=/home/sandherd/.local/state/sandherd
+Subsystem sftp internal-sftp

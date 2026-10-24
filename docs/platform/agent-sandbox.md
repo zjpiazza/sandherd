@@ -18,10 +18,11 @@ extensions API used by `SandboxTemplate`, `SandboxWarmPool`, and
 
 The router uses Kubernetes TokenReview and rejects missing or invalid bearer
 tokens. TokenReview v1 authenticates a Kubernetes identity but does not perform
-per-sandbox authorization. Sandherd therefore also restricts router ingress to
-pods labelled `app.kubernetes.io/name=sandherd-router-client` in the labelled
-`sandherd-system` namespace. The later security ticket will add Sandherd's
-agent-level authorization policy.
+per-sandbox authorization. Router ingress on port 8080 permits only the
+`sandherd-control-plane` Pods in `sandherd-system` and the explicitly labelled
+`sandherd-router-client` smoke-test Pods in approved client namespaces.
+The public gateway enforces Agent ownership and permissions; runners validate
+the gateway's short-lived, Agent-scoped capabilities.
 
 ## Router image
 

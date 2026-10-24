@@ -44,6 +44,11 @@ for permission in \
   'create agents.sandherd.dev sandherd-system' \
   'patch agents/status.sandherd.dev sandherd-system' \
   'create sandboxclaims.extensions.agents.x-k8s.io sandherd-system' \
+  'get sandboxtemplates.extensions.agents.x-k8s.io sandherd-system' \
+  'create sandboxtemplates.extensions.agents.x-k8s.io sandherd-system' \
+  'delete sandboxtemplates.extensions.agents.x-k8s.io sandherd-system' \
+  'create sandboxwarmpools.extensions.agents.x-k8s.io sandherd-system' \
+  'delete sandboxwarmpools.extensions.agents.x-k8s.io sandherd-system' \
   'patch sandboxes.agents.x-k8s.io sandherd-system' \
   'delete sandboxes.agents.x-k8s.io sandherd-system' \
   'get pods sandherd-system' \
@@ -54,6 +59,8 @@ done
 
 for permission in \
   'get secrets sandherd-system' \
+  'patch sandboxtemplates.extensions.agents.x-k8s.io sandherd-system' \
+  'update sandboxwarmpools.extensions.agents.x-k8s.io sandherd-system' \
   'create pods sandherd-system' \
   'delete pods sandherd-system' \
   'create deployments.apps sandherd-system' \

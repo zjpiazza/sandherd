@@ -47,6 +47,13 @@ fi
 kustomize "$repo_root/deploy/agent-sandbox/smoke/base" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/smoke/overlays/homelab" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/flux" >/dev/null
+kustomize "$repo_root/deploy/agent-sandbox/release" >"$rendered"
+for required in 'name: agent-sandbox-config' 'allowed-label-domains: sandherd.dev'; do
+  if ! grep -q -- "$required" "$rendered"; then
+    printf 'release prerequisite is missing: %s\n' "$required" >&2
+    exit 1
+  fi
+done
 kustomize "$repo_root/deploy/agent-runtime/base" >"$rendered"
 for required in \
   'name: sandherd-standard' \
@@ -95,6 +102,7 @@ if grep -Eq 'claimName: sandherd-codex-auth|kind: Secret|refresh_token' "$render
   printf '%s\n' 'Codex sandbox runtime exposes coordinator credential authority' >&2
   exit 1
 fi
+kustomize "$repo_root/deploy/agent-runtime/codex-openrouter" >/dev/null
 kustomize "$repo_root/deploy/control-plane" >"$rendered"
 kustomize "$repo_root/deploy/control-plane-homelab" >"$rendered"
 
@@ -109,6 +117,7 @@ for required in \
   'loadBalancerClass: tailscale' \
   'kubernetes.io/metadata.name: tailscale' \
   'name: sandherd-codex-auth' \
+  'publishNotReadyAddresses: true' \
   'storageClassName: rook-ceph-block' \
   'accessModes:' \
   'ReadWriteOnce' \
@@ -134,5 +143,8 @@ if grep -A80 'kind: Role' "$rendered" | grep -Eq 'resources: \[(deployments|stat
   printf '%s\n' 'control-plane Role can create arbitrary workloads' >&2
   exit 1
 fi
+
+kustomize "$repo_root/deploy/herdr-gateway" >/dev/null
+kustomize "$repo_root/deploy/herdr-gateway-homelab" >/dev/null
 
 printf '%s\n' 'Agent Sandbox platform manifests are valid.'

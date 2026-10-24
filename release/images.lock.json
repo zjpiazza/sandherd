@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.0-alpha.1",
+  "images": [
+    {
+      "component": "control-plane",
+      "image": "ghcr.io/zjpiazza/sandherd-control-plane@sha256:e8799afe0d0feef8fa176d8ca467a7b4f3efbbd8f170ae35660244d709d1db12",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sourceCommit": "c9f802d90e83f9d6830ba4d20f72b60793cfc055"
+    },
+    {
+      "component": "codex-runtime",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:c1e8917a49805e02e0e3ecd7ee227e520bf0d35bd1c58c18c0f00ac8b074aa4c",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sourceCommit": "c9f802d90e83f9d6830ba4d20f72b60793cfc055"
+    },
+    {
+      "component": "agent-runtime",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:cb633c73d7c6fe05ecdbda1ae5fe155f5b940c2c2343ce16ddca5c2467312afb",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sourceCommit": "c77077e353314ab894bc6059ba3e6a86bb75e66f"
+    },
+    {
+      "component": "herdr-gateway",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:6c6fccc1eb13c9a703e3c71c94b2a0c3614cf9c7810005c3941eaeb0562ea2aa",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sourceCommit": "23e87620385b59d9bfda62c17e25f3dc661efdb0"
+    },
+    {
+      "component": "agent-sandbox-router",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-sandbox-router@sha256:b1290cc3fcdb171ad938b71bd442de3624781ab650f572d9b9c98b359054aa91",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sourceCommit": "e92f13f"
+    }
+  ],
+  "agentSandbox": {
+    "version": "v0.5.3",
+    "sourceCommit": "f9cf22a0936390a120353380fed80392278de6b6",
+    "image": "registry.k8s.io/agent-sandbox/agent-sandbox-controller@sha256:ba381b4e0c86cca597d5c5a31860e38d30ec1c45e0a7a8328bb2799c87d059c0"
+  }
+}

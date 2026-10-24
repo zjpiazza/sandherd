@@ -89,6 +89,7 @@ type Agent struct {
 	Generation        int64        `json:"generation"`
 	RuntimeGeneration int64        `json:"runtimeGeneration"`
 	ResourceVersion   string       `json:"-"`
+	ResourceUID       string       `json:"-"`
 	Spec              AgentSpec    `json:"spec"`
 	Status            AgentStatus  `json:"status"`
 	DesiredState      DesiredState `json:"-"`
@@ -205,7 +206,12 @@ func ValidName(name string) bool {
 }
 
 func CanStop(state State) bool {
-	return state == StateRunning || state == StateStopping || state == StateStopped
+	switch state {
+	case StateRequested, StateProvisioning, StateStarting, StateRunning, StateReconfiguring, StateStopping, StateStopped, StateFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func CanResume(state State) bool {

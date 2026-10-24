@@ -78,9 +78,15 @@ guide](codex.md).
 
 ## Kubernetes and network isolation
 
-The control-plane Role manages only Sandherd Agents, SandboxClaims, adopted
-Sandboxes, runner status inputs, and retained PVC metadata in
-`sandherd-system`. It cannot read Secrets, create arbitrary Pods or controllers,
+The control-plane Role manages Sandherd Agents, SandboxClaims, adopted
+Sandboxes, derived SandboxTemplates/SandboxWarmPools, runner status inputs, and
+retained PVC metadata in `sandherd-system`. Templates and pools allow get/list,
+create, and delete, but not update or patch. Application checks restrict derived
+objects to Agent ownership and approved source settings; Kubernetes RBAC itself
+does not restrict which Pod settings a newly created template can contain.
+This is indirect workload-creation authority through the upstream controller,
+so the control plane remains a trusted component. It cannot read Secrets,
+directly create Pods or workload controllers,
 read Nodes, or act in another namespace. The router has only delegated
 authentication review. The sandbox service account has no RBAC binding and its
 token is not mounted. Run `make rbac-check` to assert the allow and deny matrix
@@ -103,6 +109,13 @@ addresses from inside a sandbox.
 NetworkPolicy does not replace a stronger runtime boundary. Use the separately
 tracked gVisor or Kata profile when the node/container boundary must withstand a
 kernel exploit.
+
+Standard Kubernetes NetworkPolicy also exempts traffic to the Pod's own node;
+host-network behavior varies with the CNI. Do not infer host or API isolation
+from rendered CIDR exclusions alone. Keep sandboxes off control-plane nodes,
+verify actual deny/allow probes, and use the CNI's host controls where required.
+The clean-cluster release test uses separate control-plane and worker nodes for
+this reason. See the [Kubernetes NetworkPolicy limitations](https://kubernetes.io/docs/concepts/services-networking/network-policies/).
 
 ## Audit and telemetry
 

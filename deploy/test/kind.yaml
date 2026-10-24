@@ -1,0 +1,7 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# Worker placement keeps sandbox API-deny probes away from NetworkPolicy's
+# local-node exception. Do not reduce this acceptance fixture to one node.
+nodes:
+  - role: control-plane
+  - role: worker

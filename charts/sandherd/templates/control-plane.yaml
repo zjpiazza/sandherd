@@ -1,0 +1,64 @@
+{{- if and (not .Values.network.cilium) (empty .Values.network.apiServerCIDRs) -}}
+{{- fail "Set network.apiServerCIDRs to the cluster API Service/endpoint CIDRs, or network.cilium=true for Cilium kube-apiserver policy." -}}
+{{- end -}}
+{{- if and .Values.runtime.className (empty .Values.runtime.nodeSelector) -}}
+{{- fail "runtime.nodeSelector is required with runtime.className; select nodes verified to support that runtime." -}}
+{{- end -}}
+{{- $root := . -}}
+{{- range $name := list "sandherd-control-plane" "sandherd-sandbox" }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $root.Release.Namespace }}
+automountServiceAccountToken: {{ eq $name "sandherd-control-plane" }}
+{{- end }}
+{{- range $part := splitList "\n---\n" (.Files.Get "files/manifests/rbac.yaml") }}
+{{- $object := fromYaml $part -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $object) -}}
+{{- if eq $object.kind "RoleBinding" -}}
+{{- $_ := set (first $object.subjects) "namespace" $root.Release.Namespace -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{- end }}
+{{- range $part := splitList "\n---\n" (.Files.Get "files/manifests/control-plane.yaml") }}
+{{- $object := fromYaml $part -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $object) -}}
+{{- if eq $object.kind "Deployment" -}}
+{{- $_ := set $object.spec.template.metadata "annotations" (dict "checksum/config" (toJson $root.Values | sha256sum)) -}}
+{{- $container := first $object.spec.template.spec.containers -}}
+{{- $_ := set $container "image" $root.Values.images.controlPlane -}}
+{{- $_ := set $container "resources" $root.Values.controlPlane.resources -}}
+{{- $args := list -}}
+{{- range $arg := $container.args -}}
+{{- $args = append $args ($arg | replace "agent-sandbox-system" $root.Release.Namespace | replace "--namespace=sandherd-system" (printf "--namespace=%s" $root.Release.Namespace) | replace "cluster.local" $root.Values.clusterDomain) -}}
+{{- end -}}
+{{- if $root.Values.storage.className -}}
+{{- $args = append $args (printf "--storage-profile=default=%s" $root.Values.storage.className) -}}
+{{- end -}}
+{{- $_ := set $container "args" $args -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{- end }}
+{{- $config := fromYaml (.Files.Get "files/manifests/adapters.yaml") -}}
+{{- $registry := fromJson (index $config.data "adapters.json") -}}
+{{- $adapters := list -}}
+{{- range $adapter := $registry.adapters -}}
+{{- if ne $adapter.id "codex" -}}
+{{- $adapters = append $adapters $adapter -}}
+{{- else if $root.Values.codex.enabled -}}
+{{- /* Only the installed subscription binding is advertised. */ -}}
+{{- $_ := set $adapter "profiles" (list (first $adapter.profiles)) -}}
+{{- $adapters = append $adapters $adapter -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $registry "adapters" $adapters -}}
+{{- $_ := set $config.data "adapters.json" (toPrettyJson $registry) -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $config) }}
+---
+{{ toYaml $config }}
+---
+{{ include "sandherd.network" (dict "root" . "object" (fromYaml (.Files.Get "files/manifests/control-plane-network.yaml"))) }}

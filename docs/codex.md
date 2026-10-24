@@ -73,6 +73,36 @@ The import rejects API-key mode, missing refresh authority, malformed tokens,
 oversized files, and non-ChatGPT credentials. It writes the master file with
 mode `0600`. Do not commit either the imported file or the coordinator volume.
 
+## OpenRouter alongside subscription authentication
+
+The same Codex adapter also supports an independent `openrouter` credential
+profile. It uses the Codex runtime image with OpenRouter's Responses API and
+`openai/gpt-4.1-mini` for inexpensive trials. It neither requires nor replaces
+the ChatGPT coordinator. Provider configuration is trusted operator
+configuration in `deploy/control-plane/adapter-config.yaml`.
+
+Provision a dedicated, spend-capped OpenRouter key outside the repository:
+
+```sh
+kubectl --context admin@homelab --namespace sandherd-system \
+  create secret generic sandherd-openrouter \
+  --from-file=api-key=/secure/path/openrouter-pilot.key
+```
+
+The `codex-openrouter` template injects this key only into the runner through
+`OPENROUTER_API_KEY`. It has no subscription bootstrap/sidecar or coordinator
+network access. It stores native session state in
+`/home/sandherd/.codex-openrouter`, separately from the subscription profile's
+`CODEX_HOME`. Both directories still belong to the same Agent's adapter HOME;
+this is session separation, not a separate user/security boundary.
+
+Create with `kind: "codex"` and `credentialProfile: "openrouter"` after
+installing the template/registry and adding `openrouter` to the principal's
+credential-profile allowlist. Key rotation requires replacing the sandbox
+process because the key is an environment variable. Keep the existing
+`chatgpt-subscription` binding and allowlist entry when enabling both methods.
+See [OpenRouter's Codex guide](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli).
+
 ## Runtime and lifecycle behavior
 
 Create with `kind: "codex"` and
@@ -122,6 +152,14 @@ kubectl --context admin@homelab --namespace sandherd-system exec \
   deployment/sandherd-codex-auth -- /usr/local/bin/codex-auth status
 ```
 
+The private coordinator Service publishes its endpoint while credential
+readiness fails, so clients can still receive the specific redacted failure
+reason. The API never serves an expired snapshot. Sync clients reject expired
+snapshots, repair a removed local auth file, and exit with a stable credential
+failure after the configured maximum outage; transient outages within that
+window can use an unexpired snapshot. Kubernetes restarts failed sidecars and
+init containers, allowing a repaired platform credential to restore readiness.
+
 To stop cluster use immediately, scale the coordinator to zero and stop active
 Codex Agents. To clear its cached credential, run `codex logout` in the
 coordinator Pod before scaling it down. Complete account-level revocation in
@@ -140,5 +178,24 @@ vulnerabilities. Run the provenance check locally with Cosign and zstd present:
 ./build/codex/verify-release.sh
 ```
 
-The live homelab smoke report records concurrent agents, refresh propagation,
-session isolation and resume, stable reauthentication behavior, and cleanup.
+The subscription pilot on 2026-10-08 completed a model-backed coding task through
+the public WebSocket gateway: Codex wrote executable `add.sh` and `test.sh`,
+then ran the tests. An independent in-Pod run passed those tests and an extra
+`50 + (-8) = 42` check. Stop/resume replaced the Pod while preserving the PVC
+identity, both file hashes, and Codex's native `resume --last` launch.
+
+On 2026-10-13 the retained demo Pod had completed while the Agent remained in
+`starting`. The API rejected stop from that state. Operator deletion of only
+the completed Pod let the Sandbox recreate it; the same scripts and hashes
+survived and their tests passed again. Automatic recovery from this terminal-Pod
+state is not established by that manual recovery.
+
+The 2026-10-13 run also exercised two live Codex Agents concurrently. The first
+reran its persisted tests and confirmed the second Agent's marker was absent;
+the second created that marker and confirmed the first Agent's scripts were
+absent. Both Agents used distinct workspace PVCs, empty refresh-token fields,
+and no Kubernetes service-account token. The first remained controllable through
+Herdr after an idle interval longer than the default controller lease.
+
+These observations do not yet prove refresh-token renewal, reauthentication
+recovery during a live task, or OpenRouter inference with the dedicated test key.

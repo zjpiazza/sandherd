@@ -8,6 +8,10 @@ metadata:
     app.kubernetes.io/part-of: sandherd
 spec:
   replicas: 1
+  # No leader election: avoid old/new reconcilers applying different runtime
+  # bindings concurrently during an upgrade.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: sandherd-control-plane

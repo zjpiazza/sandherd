@@ -1,6 +1,7 @@
 *
 !go.mod
 !go.sum
+!herdr-plugin.toml
 !cmd/
 !cmd/**
 !internal/
@@ -8,3 +9,5 @@
 !build/
 !build/codex/
 !build/codex/checksums.txt
+!build/herdr-gateway/
+!build/herdr-gateway/**

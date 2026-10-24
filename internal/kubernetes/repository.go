@@ -27,11 +27,13 @@ import (
 )
 
 var (
-	AgentGVR        = schema.GroupVersionResource{Group: "sandherd.dev", Version: "v1alpha1", Resource: "agents"}
-	SandboxClaimGVR = schema.GroupVersionResource{Group: "extensions.agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxclaims"}
-	SandboxGVR      = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
-	PodGVR          = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
-	PVCGVR          = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
+	AgentGVR           = schema.GroupVersionResource{Group: "sandherd.dev", Version: "v1alpha1", Resource: "agents"}
+	SandboxClaimGVR    = schema.GroupVersionResource{Group: "extensions.agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxclaims"}
+	SandboxTemplateGVR = schema.GroupVersionResource{Group: "extensions.agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxtemplates"}
+	SandboxWarmPoolGVR = schema.GroupVersionResource{Group: "extensions.agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxwarmpools"}
+	SandboxGVR         = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
+	PodGVR             = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "pods"}
+	PVCGVR             = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}
 )
 
 const (
@@ -409,6 +411,7 @@ func agentFromObject(object *unstructured.Unstructured) (lifecycle.Agent, error)
 		result.RuntimeGeneration = 1
 	}
 	result.ResourceVersion = object.GetResourceVersion()
+	result.ResourceUID = string(object.GetUID())
 	result.CreatedAt = object.GetCreationTimestamp().Time.UTC()
 	result.UpdatedAt = result.CreatedAt
 	if result.CreatedAt.IsZero() {

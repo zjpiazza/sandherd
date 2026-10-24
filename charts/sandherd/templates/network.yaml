@@ -1,0 +1,78 @@
+{{- if .Values.network.cilium }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: sandherd-kube-api
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [sandherd-control-plane, sandbox-router]
+  egress:
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+{{- end }}
+{{- if .Values.tailscale.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandherd-control-plane-tailnet
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    tailscale.com/hostname: {{ .Values.tailscale.apiHostname | quote }}
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/name: sandherd-control-plane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandherd-tailnet-api
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sandherd-control-plane
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.network.tailscaleNamespace }}
+      ports:
+        - protocol: TCP
+          port: 8080
+{{- if and .Values.herdr.enabled .Values.tailscale.herdrHostname }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandherd-herdr-tailnet
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    tailscale.com/hostname: {{ .Values.tailscale.herdrHostname | quote }}
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/name: sandherd-herdr
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: ssh
+{{- end }}
+{{- end }}
