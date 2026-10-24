@@ -1,0 +1,17 @@
+Sandherd is installed in {{ .Release.Namespace }}.
+
+The API is private. For local access:
+  kubectl -n {{ .Release.Namespace }} port-forward service/sandherd-control-plane 8080:8080
+
+Use your provisioned bearer credential for the lifecycle and terminal APIs.
+The chart never stores credentials in Helm values.
+{{ if .Values.codex.enabled }}
+Codex remains unready until the platform credential is bootstrapped:
+  kubectl -n {{ .Release.Namespace }} exec -it deployment/sandherd-codex-auth -- /usr/local/bin/codex -c 'cli_auth_credentials_store="file"' login --device-auth
+{{ end }}
+Agent CRDs, Agents and workspace PVCs are retained on uninstall. Stop or delete
+Agents through the API before removing the control plane. Codex auth and Herdr
+home PVCs have helm.sh/resource-policy=keep and require explicit disposal.
+
+See the release installation guide for prerequisite controller setup, credential
+creation, upgrade/rollback limits and backups.

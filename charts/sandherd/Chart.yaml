@@ -1,0 +1,10 @@
+apiVersion: v2
+name: sandherd
+description: Persistent coding agents with a private lifecycle and terminal API
+type: application
+version: 0.1.0-alpha.1
+appVersion: 0.1.0-alpha.1
+kubeVersion: ">=1.32.0-0"
+home: https://github.com/zjpiazza/sandherd
+sources:
+  - https://github.com/zjpiazza/sandherd

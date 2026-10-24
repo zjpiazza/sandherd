@@ -13,13 +13,21 @@
         {
           "artifact": "docs/platform/stability-smoke-2026-10-24.json",
           "proves": "Shared lifecycle, reconnect replay, workspace persistence, completed-Pod recovery and disposable cleanup on the homelab."
+        },
+        {
+          "artifact": "docs/platform/security-verification-2026-10-24.json",
+          "proves": "Five immutable multi-architecture images with SBOM/provenance and passing security scans; auth/gateway upgrades with preserved PVC identities. Budget-enforcement rollout and release acceptance remain unverified."
+        },
+        {
+          "artifact": "docs/platform/helm-verification-2026-10-24.json",
+          "proves": "Packaged installation on a two-node kind cluster; actual limits, terminal/recovery, network allow/deny, upgrade/rollback, retained data and quiescent repository backup/restore. Optional full Herdr/Codex release acceptance remains outstanding."
         }
       ],
       "remaining": [
-        "Resource budgets must be applied to Pods.",
-        "Versioned Helm chart and release automation/artifacts.",
-        "Install, upgrade, rollback, uninstall and backup verification.",
-        "Herdr/Codex success scenario through released artifacts."
+        "Homelab resource-budget rollout awaits explicit namespace RBAC approval.",
+        "Verify the new installed-release CI job and publish the release bundle after license selection.",
+        "Complete Herdr/Codex acceptance through the packaged release, including long-lived auth refresh and revocation/reauthentication.",
+        "Grant repository Actions access to existing GHCR packages so automated image publication can finish."
       ]
     },
     {
@@ -55,11 +63,16 @@
       "url": "https://github.com/zjpiazza/sandherd/issues/26",
       "requirements": "## Outcome\n\nA user can create and destroy autonomous Codex sandboxes without authenticating each agent, using a platform-level ChatGPT subscription identity rather than requiring API billing.\n\n## Scope\n\n- Package a pinned, verified OpenAI Codex CLI release in a Sandherd runtime image.\n- Implement the adapter contract from #25 for interactive PTY startup, headless execution where useful, readiness, graceful shutdown, and native session resume.\n- Keep each agent's CODEX_HOME configuration and sessions isolated from every other agent and from the repository workspace.\n- Bind a protected, durable, writable ChatGPT authentication cache as platform credential state.\n- Bootstrap that state once from an operator-authorized Codex login without printing or committing auth.json.\n- Validate concurrent use and token refresh with multiple disposable sandboxes.\n- Document recovery, revocation, backup exclusion, and reauthentication procedures.\n\n## Authentication design constraint\n\nCodex writes refreshed tokens back to auth.json. Kubernetes Secret projection alone is therefore insufficient as the live credential store. The implementation must use the mutable-credential strategy from #25 and must not give sandboxes Kubernetes Secret-write RBAC.\n\nOpenAI documents copied auth.json for trusted private automation but recommends one machine or serialized use per copy. Concurrent refresh behavior must be tested explicitly; if shared-file refresh is unreliable, introduce a single-writer coordinator rather than requiring per-agent login.\n\n## Acceptance criteria\n\n- [ ] The runtime image reports the pinned Codex version and passes provenance/vulnerability checks used by Sandherd releases.\n- [ ] Creating a Codex agent requires no interactive login after the platform credential is bootstrapped.\n- [ ] Two Codex agents can execute concurrently using the ChatGPT subscription identity.\n- [ ] A forced or naturally observed token refresh remains valid for both agents and for a newly created third agent.\n- [ ] Each agent has isolated config, session history, and workspace state; only the minimum authentication state is shared.\n- [ ] Attach, detach, stop, resume, sandbox recreation, and deletion preserve the documented Codex session behavior.\n- [ ] No OAuth token, auth file content, or credential path appears in API responses, events, or logs.\n- [ ] Revoking the credential produces a stable degraded/error state with an operator-facing remediation message.\n- [ ] A live homelab smoke test is documented.\n\n## Non-goals\n\n- Requiring an OpenAI API key for the initial supported path.\n- Exposing Codex-specific authentication details in the public Agent API.\n- Treating the shared authentication state as part of an agent workspace.\n\n## Dependencies\n\nBlocked by #25. This adapter is required by #13 and must land before the release packaging in #10 is considered complete.\n\n## Upstream references\n\n- https://developers.openai.com/codex/auth\n- https://developers.openai.com/codex/auth/ci-cd-auth\n- https://github.com/openai/codex\n",
       "status": "in-progress",
-      "evidence": [],
+      "evidence": [
+        {
+          "artifact": "docs/platform/codex-refresh-2026-10-24.json",
+          "proves": "Real headless inference in two existing and one newly created Agent after observed coordinator refresh. Does not prove long-lived PTY token reload or account-level revocation."
+        }
+      ],
       "remaining": [
-        "Validate naturally observed refresh with two concurrent agents and a newly created third agent.",
-        "Validate credential revocation/reauthentication with stable redacted public failures.",
-        "Update and merge PR #33 after live acceptance passes."
+        "Validate long-running interactive session credential reload after a naturally observed refresh.",
+        "Validate account-level revocation and reauthentication with stable redacted public failures.",
+        "Update and merge PR #33 after all live acceptance passes."
       ]
     },
     {

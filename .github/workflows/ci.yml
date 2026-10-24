@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
   push:
     branches:
@@ -33,8 +34,47 @@ jobs:
         with:
           node-version: 24
 
+      - name: Install verified Helm
+        run: |
+          ./scripts/install-helm.sh "$RUNNER_TEMP/sandherd-tools"
+          echo "$RUNNER_TEMP/sandherd-tools" >> "$GITHUB_PATH"
+
       - name: Run repository checks
         run: make verify
+
+  installed-release:
+    name: Installed release lifecycle
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install verified test tools
+        run: |
+          ./scripts/install-helm.sh "$RUNNER_TEMP/sandherd-tools"
+          ./scripts/install-kind.sh "$RUNNER_TEMP/sandherd-tools"
+          echo "$RUNNER_TEMP/sandherd-tools" >> "$GITHUB_PATH"
+
+      - name: Build installed smoke client
+        run: make dist/smoke
+
+      - name: Test packaged installation and data lifecycle
+        run: ./scripts/test-release-kind.sh
+
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: installed-release-evidence
+          path: dist/test-results/
 
   binaries:
     name: Linux ${{ matrix.arch }} binaries

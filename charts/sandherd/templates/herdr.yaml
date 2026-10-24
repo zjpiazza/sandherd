@@ -1,0 +1,53 @@
+{{- if .Values.herdr.enabled -}}
+{{- $root := . -}}
+{{- range $file := list "herdr.yaml" "herdr-pvc.yaml" "herdr-service.yaml" -}}
+{{- $object := fromYaml ($root.Files.Get (printf "files/manifests/%s" $file)) -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $object) -}}
+{{- if eq $object.kind "Deployment" -}}
+{{- $_ := set $object.spec.template.metadata "annotations" (dict "checksum/config" (toJson $root.Values | sha256sum)) -}}
+{{- $_ := set (first $object.spec.template.spec.containers) "image" $root.Values.images.herdrGateway -}}
+{{- range $volume := $object.spec.template.spec.volumes -}}
+{{- if eq $volume.name "access" -}}{{- $_ := set $volume.secret "secretName" $root.Values.herdr.accessSecret -}}{{- end -}}
+{{- end -}}
+{{- else if eq $object.kind "PersistentVolumeClaim" -}}
+{{- $_ := set $object.metadata "annotations" (dict "helm.sh/resource-policy" "keep") -}}
+{{- $_ := set $object.spec.resources.requests "storage" $root.Values.herdr.storageSize -}}
+{{- if $root.Values.storage.className -}}{{- $_ := set $object.spec "storageClassName" $root.Values.storage.className -}}{{- end -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{- end }}
+{{- $config := fromJson (.Files.Get "files/herdr-config.json") -}}
+{{- $kind := ternary "codex" "shell" .Values.codex.enabled -}}
+{{- $kind = default $kind .Values.herdr.agentKind -}}
+{{- if and (eq $kind "codex") (not .Values.codex.enabled) -}}
+{{- fail "herdr.agentKind=codex requires codex.enabled=true." -}}
+{{- end -}}
+{{- if and .Values.herdr.credentialProfile (ne $kind "codex") -}}
+{{- fail "herdr.credentialProfile is only valid for the installed Codex adapter." -}}
+{{- end -}}
+{{- $_ := set $config.create.spec "kind" $kind -}}
+{{- $_ := unset $config.create.spec "credentialProfile" -}}
+{{- if .Values.herdr.credentialProfile -}}
+{{- $_ := set $config.create.spec "credentialProfile" .Values.herdr.credentialProfile -}}
+{{- else if and (eq $kind "codex") .Values.codex.enabled -}}
+{{- $_ := set $config.create.spec "credentialProfile" "chatgpt-subscription" -}}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandherd-herdr-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.json: |
+{{ toPrettyJson $config | indent 4 }}
+---
+{{- $network := fromYaml (.Files.Get "files/manifests/herdr-network.yaml") -}}
+{{- $peers := list (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" .Release.Namespace))) -}}
+{{- if and .Values.tailscale.enabled .Values.tailscale.herdrHostname -}}
+{{- $peers = append $peers (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" .Values.network.tailscaleNamespace))) -}}
+{{- end -}}
+{{- $_ := set (first $network.spec.ingress) "from" $peers -}}
+{{ include "sandherd.network" (dict "root" . "object" $network) }}
+{{- end }}

@@ -1,0 +1,135 @@
+{
+  "capturedAt": "2026-10-24T12:53:11.676637+00:00",
+  "scope": "Security verification and interim image publication; not complete release acceptance.",
+  "images": [
+    {
+      "component": "control-plane",
+      "image": "ghcr.io/zjpiazza/sandherd-control-plane@sha256:4926e8d983b699f89203226b21165a3042e9a5850ebe9076ca514bea5b10a666",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sbomVerified": true,
+      "provenanceVerified": true,
+      "sourceCommit": "c77077e353314ab894bc6059ba3e6a86bb75e66f",
+      "fixedHighCriticalFindings": 0
+    },
+    {
+      "component": "codex-runtime",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:0eab429ab4c5ed7489ffb346426ebeca28f9eeebedb0dbaa75fa9bf43dc925ad",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sbomVerified": true,
+      "provenanceVerified": true,
+      "sourceCommit": "c77077e353314ab894bc6059ba3e6a86bb75e66f",
+      "fixedHighCriticalFindings": 0
+    },
+    {
+      "component": "agent-runtime",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:cb633c73d7c6fe05ecdbda1ae5fe155f5b940c2c2343ce16ddca5c2467312afb",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sbomVerified": true,
+      "provenanceVerified": true,
+      "sourceCommit": "c77077e353314ab894bc6059ba3e6a86bb75e66f",
+      "fixedHighCriticalFindings": 0
+    },
+    {
+      "component": "herdr-gateway",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:4dcab25b5aaedc925102c660ca7d1bd0bfc20b9a9c24df3badf163991c5b7675",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sbomVerified": true,
+      "provenanceVerified": true,
+      "sourceCommit": "c77077e353314ab894bc6059ba3e6a86bb75e66f",
+      "fixedHighCriticalFindings": 0
+    },
+    {
+      "component": "agent-sandbox-router",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-sandbox-router@sha256:b1290cc3fcdb171ad938b71bd442de3624781ab650f572d9b9c98b359054aa91",
+      "architectures": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sbomVerified": true,
+      "provenanceVerified": true,
+      "sourceCommit": "e92f13f",
+      "fixedHighCriticalFindings": 0
+    }
+  ],
+  "verification": [
+    {
+      "command": "mise x node@24.3.0 -- make verify",
+      "result": "passed",
+      "sourceCommit": "c77077e353314ab894bc6059ba3e6a86bb75e66f",
+      "covers": [
+        "Go race tests and vet",
+        "reachable Go vulnerabilities",
+        "API and terminal contracts",
+        "Kustomize rendering",
+        "host command smoke tests",
+        "Linux amd64 and arm64 binaries"
+      ]
+    },
+    {
+      "command": "docker buildx build --platform linux/<arch> --file build/agent-sandbox-router/Dockerfile --target vulnerability-check --output type=cacheonly .",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "result": "passed",
+      "reachableVulnerabilities": 0,
+      "note": "The scanner reported one module-level vulnerability whose affected symbols are not called."
+    },
+    {
+      "tool": "Trivy 0.72.0",
+      "policy": "--scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1",
+      "result": "passed on all five images for both architectures"
+    },
+    {
+      "tool": "docker buildx imagetools inspect",
+      "result": "Verified both architecture manifests and per-architecture SBOM/provenance documents for every image"
+    }
+  ],
+  "homelab": {
+    "context": "admin@homelab",
+    "namespace": "sandherd-system",
+    "updatedComponents": [
+      "sandherd-codex-auth",
+      "sandherd-herdr"
+    ],
+    "deploymentResult": "Both deployments ready; installed helper binaries report commit c77077e353314ab894bc6059ba3e6a86bb75e66f.",
+    "credentialStatus": {
+      "status": "ready",
+      "lastRefresh": "2026-10-18T16:51:42Z",
+      "expiresAt": "2026-10-28T16:51:41Z"
+    },
+    "gatewayVerification": "Authenticated SSH with host key pinned through Kubernetes; herdr reports 0.9.1 and the bridge reports the new revision.",
+    "persistence": "All four original PVC UIDs unchanged; both existing Codex Agents remain running.",
+    "resourceBudgetRollout": "Not deployed. The control-plane image and source runtime bindings remain on the prior deployment pending explicit RBAC approval."
+  },
+  "pendingActions": [
+    {
+      "action": "Approve get/list/create/delete of SandboxTemplates and SandboxWarmPools for the control-plane ServiceAccount in sandherd-system.",
+      "reason": "Automatic approval review rejected this expansion of indirect workload-creation authority. No Role change was applied.",
+      "status": "awaiting explicit user approval"
+    },
+    {
+      "action": "Grant repository Actions Write access to the five preexisting GHCR packages.",
+      "reason": "Publication run 40094296739 failed with read_package/write_package permission errors; local publication to existing public packages succeeded.",
+      "status": "awaiting package-settings change"
+    }
+  ],
+  "remainingAcceptance": [
+    "Live resource enforcement and migration",
+    "Codex refresh/revocation acceptance",
+    "Helm installation, upgrade, rollback, backup and uninstall",
+    "gVisor, scale/idle policies and remaining adapters"
+  ]
+}

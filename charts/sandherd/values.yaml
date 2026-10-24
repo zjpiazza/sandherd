@@ -1,0 +1,49 @@
+# Install once per dedicated namespace. Provision credentials separately.
+images:
+  controlPlane: ghcr.io/zjpiazza/sandherd-control-plane@sha256:e8799afe0d0feef8fa176d8ca467a7b4f3efbbd8f170ae35660244d709d1db12
+  agentRuntime: ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:cb633c73d7c6fe05ecdbda1ae5fe155f5b940c2c2343ce16ddca5c2467312afb
+  codexRuntime: ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:c1e8917a49805e02e0e3ecd7ee227e520bf0d35bd1c58c18c0f00ac8b074aa4c
+  herdrGateway: ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:4dcab25b5aaedc925102c660ca7d1bd0bfc20b9a9c24df3badf163991c5b7675
+  router: ghcr.io/zjpiazza/sandherd-agent-sandbox-router@sha256:b1290cc3fcdb171ad938b71bd442de3624781ab650f572d9b9c98b359054aa91
+clusterDomain: cluster.local
+storage:
+  className: ""
+network:
+  # Explicit Kubernetes API destinations are required with a generic CNI.
+  # Include the Service IP and the endpoint IPs used after service translation.
+  apiServerCIDRs: []
+  # On Cilium, use the kube-apiserver entity instead of fixed destination IPs.
+  cilium: false
+  tailscaleNamespace: tailscale
+controlPlane:
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+runtime:
+  # A nonempty RuntimeClass requires scheduling selectors; no runtime fallback.
+  className: ""
+  nodeSelector: {}
+  tolerations: []
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "2", memory: 4Gi}
+router:
+  replicas: 2
+codex:
+  # Bootstrap the platform credential after enabling this feature. Until then
+  # the coordinator is intentionally unready; omit --wait for that first step.
+  enabled: false
+  storageSize: 1Gi
+herdr:
+  enabled: false
+  storageSize: 1Gi
+  # Existing Secret: authorized_keys, ssh_host_ed25519_key, api-token.
+  accessSecret: sandherd-herdr-access
+  # Empty defaults to shell, or Codex when codex.enabled=true.
+  agentKind: ""
+  credentialProfile: ""
+tailscale:
+  enabled: false
+  apiHostname: sandherd
+  # Leave empty to expose only the API. Set explicitly for the SSH gateway.
+  herdrHostname: ""

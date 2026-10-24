@@ -1,0 +1,32 @@
+{{- $root := . -}}
+{{- range $part := splitList "\n---\n" (.Files.Get "files/manifests/router-rbac.yaml") -}}
+{{- $object := fromYaml $part -}}
+{{- if eq $object.kind "ClusterRoleBinding" -}}
+{{- $_ := set $object.metadata "name" (printf "%s-sandherd-router-auth" $root.Release.Namespace) -}}
+{{- $_ := set (first $object.subjects) "namespace" $root.Release.Namespace -}}
+{{- end -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $object) }}
+---
+{{ toYaml $object }}
+{{- end }}
+{{- range $part := splitList "\n---\n" (.Files.Get "files/manifests/router.yaml") -}}
+{{- $object := fromYaml $part -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $object) -}}
+{{- if eq $object.kind "Deployment" -}}
+{{- $_ := set $object.spec "replicas" $root.Values.router.replicas -}}
+{{- $container := first $object.spec.template.spec.containers -}}
+{{- $_ := set $container "image" $root.Values.images.router -}}
+{{- $args := list -}}
+{{- range $arg := $container.args -}}{{- $args = append $args ($arg | replace "cluster.local" $root.Values.clusterDomain) -}}{{- end -}}
+{{- $_ := set $container "args" $args -}}
+{{- end }}
+---
+{{ toYaml $object }}
+{{- end }}
+{{- range $part := splitList "\n---\n" (.Files.Get "files/manifests/platform-network.yaml") -}}
+{{- $object := fromYaml $part -}}
+{{- if eq $object.metadata.name "sandbox-router" }}
+---
+{{ include "sandherd.network" (dict "root" $root "object" $object) }}
+{{- end }}
+{{- end }}

@@ -14,7 +14,7 @@ LDFLAGS := -s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$(VE
 
 .DEFAULT_GOAL := verify
 
-.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform rbac-check smoke test test-race verify vulncheck
+.PHONY: FORCE agent-sandbox-router-container build build-linux chart-check clean container-build contracts fmt fmt-check generate generated-check help lint platform rbac-check release-package smoke test test-race verify vulncheck
 
 help:
 	@printf '%s\n' \
@@ -56,6 +56,15 @@ contracts:
 platform:
 	KUSTOMIZE_VERSION="$(KUSTOMIZE_VERSION)" ./scripts/validate-platform.sh
 
+chart-check:
+	@command -v helm >/dev/null || { printf '%s\n' 'Install Helm 3 with scripts/install-helm.sh and add its tool directory to PATH.' >&2; exit 1; }
+	python3 scripts/sync-chart-assets.py --check
+	helm lint charts/sandherd --set network.cilium=true
+	$(GO) test ./internal/chart
+
+release-package:
+	python3 scripts/package-release.py
+
 rbac-check:
 	./scripts/check-sandherd-rbac.sh
 
@@ -95,7 +104,7 @@ agent-sandbox-router-container:
 		--tag "$(AGENT_SANDBOX_ROUTER_IMAGE)" \
 		.
 
-verify: fmt-check lint test-race vulncheck generated-check contracts platform smoke build-linux
+verify: fmt-check lint test-race vulncheck generated-check contracts platform chart-check smoke build-linux
 
 clean:
 	rm -rf dist

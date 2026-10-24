@@ -1,0 +1,29 @@
+{
+  "credentialStatus": {
+    "status": "ready",
+    "lastRefresh": "2026-10-18T16:51:42Z",
+    "expiresAt": "2026-10-28T16:51:41Z"
+  },
+  "agents": [
+    {
+      "agentId": "01a11c74-5120-75d9-a654-f20e54ffc93e",
+      "modelInferencePassed": true
+    },
+    {
+      "agentId": "01a136e8-a137-7bb6-a31f-cd45b6b680c9",
+      "modelInferencePassed": true
+    },
+    {
+      "agentId": "01a16e06-aca1-7286-967f-4d121a5565c3",
+      "modelInferencePassed": true
+    }
+  ],
+  "newAgentId": "01a16e06-aca1-7286-967f-4d121a5565c3",
+  "scope": "model inference in two existing and one newly created agent after observed coordinator refresh",
+  "capturedAt": "2026-10-24T13:14:52.382054+00:00",
+  "limitations": [
+    "Inference used a separate headless process in each sandbox; long-running interactive process refresh was not established.",
+    "Account-level revocation and browser reauthentication remain untested."
+  ],
+  "cleanup": "Disposable Agent deleted; existing Agents were retained."
+}

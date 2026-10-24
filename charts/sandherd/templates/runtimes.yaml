@@ -1,0 +1,31 @@
+{{- $root := . -}}
+{{- $profiles := list "standard" -}}
+{{- if .Values.codex.enabled -}}{{- $profiles = append $profiles "codex" -}}{{- end -}}
+{{- range $profile := $profiles -}}
+{{- $object := fromYaml ($root.Files.Get (printf "files/manifests/%s.yaml" $profile)) -}}
+{{- include "sandherd.metadata" (dict "root" $root "object" $object) -}}
+{{- $pod := $object.spec.podTemplate.spec -}}
+{{- $image := $root.Values.images.agentRuntime -}}
+{{- if eq $profile "codex" -}}{{- $image = $root.Values.images.codexRuntime -}}{{- end -}}
+{{- range $container := concat $pod.initContainers $pod.containers -}}
+{{- $_ := set $container "image" $image -}}
+{{- if eq $container.name "runner" -}}{{- $_ := set $container "resources" $root.Values.runtime.resources -}}{{- end -}}
+{{- end -}}
+{{- if $root.Values.runtime.className -}}{{- $_ := set $pod "runtimeClassName" $root.Values.runtime.className -}}{{- end -}}
+{{- if $root.Values.runtime.nodeSelector -}}{{- $_ := set $pod "nodeSelector" $root.Values.runtime.nodeSelector -}}{{- end -}}
+{{- if $root.Values.runtime.tolerations -}}{{- $_ := set $pod "tolerations" $root.Values.runtime.tolerations -}}{{- end -}}
+{{- $network := $object.spec.networkPolicy | toJson | replace "agent-sandbox-system" $root.Release.Namespace | fromJson -}}
+{{- $_ := set $object.spec "networkPolicy" $network }}
+---
+{{ toYaml $object }}
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: sandherd-{{ $profile }}
+  namespace: {{ $root.Release.Namespace }}
+spec:
+  replicas: 0
+  sandboxTemplateRef:
+    name: sandherd-{{ $profile }}
+{{- end }}

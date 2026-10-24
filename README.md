@@ -139,7 +139,10 @@ Developing Sandherd itself requires Go 1.26 or newer, Node.js 24 for contract va
 
 ### Installation
 
-Installation instructions will be added after the first end-to-end release. The intended installation path is a Helm chart with optional GitOps examples.
+The [pre-release installation guide](docs/installation.md) covers the versioned
+Helm chart, private credentials, optional Codex/Herdr and Tailscale access,
+upgrades, rollback, backups, and data retention. The bundle is under acceptance
+testing and has not yet been published as a supported release.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

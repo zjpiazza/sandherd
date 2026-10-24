@@ -110,6 +110,13 @@ NetworkPolicy does not replace a stronger runtime boundary. Use the separately
 tracked gVisor or Kata profile when the node/container boundary must withstand a
 kernel exploit.
 
+Standard Kubernetes NetworkPolicy also exempts traffic to the Pod's own node;
+host-network behavior varies with the CNI. Do not infer host or API isolation
+from rendered CIDR exclusions alone. Keep sandboxes off control-plane nodes,
+verify actual deny/allow probes, and use the CNI's host controls where required.
+The clean-cluster release test uses separate control-plane and worker nodes for
+this reason. See the [Kubernetes NetworkPolicy limitations](https://kubernetes.io/docs/concepts/services-networking/network-policies/).
+
 ## Audit and telemetry
 
 Authentication failures, unavailable authentication state, denied role/profile

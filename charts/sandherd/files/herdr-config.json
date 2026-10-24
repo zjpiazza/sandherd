@@ -1,0 +1,23 @@
+{
+  "baseUrl": "http://sandherd-control-plane:8080",
+  "tokenFile": "/var/run/secrets/sandherd-herdr/api-token",
+  "create": {
+    "spec": {
+      "kind": "codex",
+      "sandboxProfile": "standard",
+      "credentialProfile": "chatgpt-subscription",
+      "resources": {
+        "cpu": "1",
+        "memory": "2Gi"
+      },
+      "workspace": {
+        "size": "1Gi",
+        "storageProfile": "default",
+        "retentionPolicy": "retain"
+      },
+      "lifecycle": {
+        "idleTimeoutSeconds": 0
+      }
+    }
+  }
+}

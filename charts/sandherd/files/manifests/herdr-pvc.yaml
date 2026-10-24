@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sandherd-herdr-home
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-herdr
+    app.kubernetes.io/part-of: sandherd
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

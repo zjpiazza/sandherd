@@ -47,6 +47,13 @@ fi
 kustomize "$repo_root/deploy/agent-sandbox/smoke/base" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/smoke/overlays/homelab" >/dev/null
 kustomize "$repo_root/deploy/agent-sandbox/flux" >/dev/null
+kustomize "$repo_root/deploy/agent-sandbox/release" >"$rendered"
+for required in 'name: agent-sandbox-config' 'allowed-label-domains: sandherd.dev'; do
+  if ! grep -q -- "$required" "$rendered"; then
+    printf 'release prerequisite is missing: %s\n' "$required" >&2
+    exit 1
+  fi
+done
 kustomize "$repo_root/deploy/agent-runtime/base" >"$rendered"
 for required in \
   'name: sandherd-standard' \

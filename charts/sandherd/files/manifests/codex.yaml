@@ -1,0 +1,272 @@
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: sandherd-codex
+  namespace: sandherd-system
+  labels:
+    app.kubernetes.io/name: sandherd-codex
+    app.kubernetes.io/part-of: sandherd
+spec:
+  service: true
+  envVarsInjectionPolicy: Allowed
+  volumeClaimTemplatesPolicy: Allowed
+  networkPolicyManagement: Managed
+  networkPolicy:
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: agent-sandbox-system
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: sandbox-router
+                app.kubernetes.io/component: router
+        ports:
+          - protocol: TCP
+            port: 8080
+    egress:
+      - to:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: sandherd-codex-auth
+        ports:
+          - protocol: TCP
+            port: 8090
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - protocol: UDP
+            port: 53
+          - protocol: TCP
+            port: 53
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:
+                - 10.0.0.0/8
+                - 100.64.0.0/10
+                - 127.0.0.0/8
+                - 169.254.0.0/16
+                - 172.16.0.0/12
+                - 192.168.0.0/16
+                - 224.0.0.0/4
+                - 240.0.0.0/4
+        ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 22
+      - to:
+          - ipBlock:
+              cidr: ::/0
+              except:
+                - ::1/128
+                - fc00::/7
+                - fe80::/10
+        ports:
+          - protocol: TCP
+            port: 443
+          - protocol: TCP
+            port: 22
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sandherd-agent
+        app.kubernetes.io/part-of: sandherd
+        sandherd.dev/adapter-id: codex
+    spec:
+      serviceAccountName: sandherd-sandbox
+      automountServiceAccountToken: false
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: workspace-bootstrap
+          image: sandherd/codex-runtime:dev
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          command: [/usr/local/bin/workspace-bootstrap]
+          args:
+            - --workspace=/workspace
+            - --timeout=5m
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: temporary
+              mountPath: /tmp
+        - name: credential-bootstrap
+          image: sandherd/codex-runtime:dev
+          imagePullPolicy: IfNotPresent
+          command: [/usr/local/bin/codex-auth]
+          args:
+            - sync
+            - --once
+            - --source-url=http://sandherd-codex-auth:8090/v1/auth
+            - --auth-file=/workspace/.sandherd/adapters/codex/.codex/auth.json
+            - --timeout=10s
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      containers:
+        - name: runner
+          image: sandherd/codex-runtime:dev
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace/repository
+          command: [/usr/local/bin/sandherd-runner]
+          args:
+            - --agent-id=$(SANDHERD_AGENT_ID)
+            - --listen=:8080
+            - --auth-token-file=
+            - --capability-public-key-file=/var/run/secrets/sandherd/capability-public-key.pem
+            - --working-directory=/workspace/repository
+          env:
+            - name: HOME
+              value: /home/sandherd
+            - name: CODEX_HOME
+              value: /home/sandherd/.codex
+            - name: XDG_CONFIG_HOME
+              value: /home/sandherd/.config
+            - name: XDG_DATA_HOME
+              value: /home/sandherd/.local/share
+            - name: XDG_CACHE_HOME
+              value: /home/sandherd/.cache
+          ports:
+            - name: runner
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: runner
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: runner
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace/repository
+              subPath: repository
+            - name: workspace
+              mountPath: /home/sandherd
+              subPathExpr: .sandherd/adapters/$(SANDHERD_ADAPTER_ID)
+            - name: temporary
+              mountPath: /tmp
+            - name: capability-public-key
+              mountPath: /var/run/secrets/sandherd
+              readOnly: true
+        - name: credential-sync
+          image: sandherd/codex-runtime:dev
+          imagePullPolicy: IfNotPresent
+          command: [/usr/local/bin/codex-auth]
+          args:
+            - sync
+            - --source-url=http://sandherd-codex-auth:8090/v1/auth
+            - --auth-file=/home/sandherd/.codex/auth.json
+            - --listen=:8091
+            - --interval=15s
+            - --max-stale=2m
+            - --timeout=10s
+          ports:
+            - name: credential
+              containerPort: 8091
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: credential
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: credential
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /home/sandherd
+              subPath: .sandherd/adapters/codex
+      volumes:
+        - name: temporary
+          emptyDir:
+            sizeLimit: 512Mi
+        - name: capability-public-key
+          configMap:
+            name: sandherd-runner-capability-key
+            items:
+              - key: public-key.pem
+                path: capability-public-key.pem

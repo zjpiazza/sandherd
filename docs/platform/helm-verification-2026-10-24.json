@@ -1,0 +1,42 @@
+{
+  "context": "kind-sandherd-release-test",
+  "namespace": "sandherd-test",
+  "chart": "sandherd-0.1.0-alpha.1.tgz",
+  "checks": [
+    "Quiescent repository backup created without credential or adapter-home data",
+    "Sandbox DNS permitted",
+    "Sandbox TCP network probe succeeds against allowed DNS",
+    "Sandbox Kubernetes API egress denied",
+    "Upgrade preserves running Pod identity",
+    "Upgrade preserves PVC identity and repository data",
+    "Rollback preserves running Pod and PVC identities",
+    "Rollback preserves repository data",
+    "Retain policy preserves workspace after Agent deletion",
+    "Uninstall preserves retained workspace",
+    "Uninstall preserves Agent CRD",
+    "Repository archive restores into a fresh isolated Agent"
+  ],
+  "backupSHA256": "4da2c0d861572716b00cb2edf07235f2c9bb0c643788662b3216208464969145",
+  "originalPVCUID": "a543faac-ba12-4537-b007-498707643cfb",
+  "limitations": [
+    "Tests a quiescent repository archive, not a CSI snapshot or application-consistent backup of an active model task.",
+    "Does not prove preservation across incompatible runtime-template or CRD changes.",
+    "Optional Codex/Herdr/Tailscale variants passed rendering tests; their complete Helm-installed live scenario remains outstanding.",
+    "No release was published; the project license and GHCR Actions access remain unresolved."
+  ],
+  "capturedAt": "2026-10-24T13:37:04.290013+00:00",
+  "kubernetesVersion": "v1.36.4",
+  "kindVersion": "v0.33.0",
+  "topology": "One control-plane node and one worker; rootless Docker",
+  "chartSHA256": "67bead84202ed69aa5bfe142839c6c604f6a5f0591a7170d68286a9152a5e84b",
+  "installedSmoke": [
+    "created smoke-01a16e1e5aad7a8e9774fe9ddf54fc41 (01a16e1e-5ab1-7f82-8bbc-d4a38fb61e6c)",
+    "running Pod enforces requested CPU and memory",
+    "interactive input and replay across disconnect passed",
+    "stop/resume preserved the workspace and replaced the runner",
+    "completed-Pod recovery preserved the same PVC",
+    "recovered Pod retains requested CPU and memory",
+    "deleted test agent and verified cleanup"
+  ],
+  "sourceRevision": "c9f802d90e83f9d6830ba4d20f72b60793cfc055 plus pending chart sources"
+}
