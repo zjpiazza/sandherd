@@ -4,6 +4,7 @@ ARG GO_VERSION=1.26.10
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS build
 WORKDIR /src
+ENV GOTOOLCHAIN=local
 
 ADD --checksum=sha256:5c154ff2525bcad4564744e052af1a527465fff4047c00a007fda1beb8e0e7e8 \
     https://github.com/kubernetes-sigs/agent-sandbox/archive/f9cf22a0936390a120353380fed80392278de6b6.tar.gz \
@@ -12,17 +13,21 @@ RUN tar --extract --gzip --file=/tmp/agent-sandbox.tar.gz --strip-components=1
 
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=v0.5.3
+ARG VERSION=v0.5.3-sandherd.1
 ARG COMMIT=f9cf22a0936390a120353380fed80392278de6b6
 ARG BUILD_DATE=unknown
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    go get golang.org/x/net@v0.60.0 google.golang.org/grpc@v1.83.2 && \
     go mod download && \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
     go build -trimpath \
       -ldflags="-s -w -X sigs.k8s.io/agent-sandbox/internal/version.gitVersion=$VERSION -X sigs.k8s.io/agent-sandbox/internal/version.gitSHA=$COMMIT -X sigs.k8s.io/agent-sandbox/internal/version.buildDate=$BUILD_DATE" \
       -o /out/sandbox-router ./sandbox-router/cmd
+
+FROM build AS vulnerability-check
+RUN go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -mode=binary /out/sandbox-router
 
 FROM scratch
 COPY --from=build /out/sandbox-router /sandbox-router

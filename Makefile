@@ -8,12 +8,13 @@ BUILD_DATE ?= unknown
 BINARIES := control-plane runner herdr-bridge workspace-bootstrap codex-auth codex-launcher smoke
 CONTAINER_TARGETS := control-plane runner herdr-bridge workspace-bootstrap agent-runtime codex-runtime herdr-gateway
 KUSTOMIZE_VERSION ?= v5.8.1
+GOVULNCHECK_VERSION ?= v1.9.0
 AGENT_SANDBOX_ROUTER_IMAGE ?= sandherd/agent-sandbox-router:v0.5.3
 LDFLAGS := -s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$(VERSION) -X github.com/zjpiazza/sandherd/internal/buildinfo.Commit=$(COMMIT) -X github.com/zjpiazza/sandherd/internal/buildinfo.Date=$(BUILD_DATE)
 
 .DEFAULT_GOAL := verify
 
-.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform rbac-check smoke test test-race verify
+.PHONY: FORCE agent-sandbox-router-container build build-linux clean container-build contracts fmt fmt-check generate generated-check help lint platform rbac-check smoke test test-race verify vulncheck
 
 help:
 	@printf '%s\n' \
@@ -21,6 +22,7 @@ help:
 		'make fmt             Format Go source files' \
 		'make test            Run unit tests' \
 		'make test-race       Run unit tests with race detection' \
+		'make vulncheck       Check reachable Go vulnerabilities' \
 		'make contracts       Validate OpenAPI and terminal contracts' \
 		'make build           Build host binaries into dist/' \
 		'make build-linux     Build Linux amd64 and arm64 binaries' \
@@ -44,6 +46,9 @@ test:
 
 test-race:
 	$(GO) test -race ./...
+
+vulncheck:
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 contracts:
 	./scripts/validate-contracts.sh
@@ -90,7 +95,7 @@ agent-sandbox-router-container:
 		--tag "$(AGENT_SANDBOX_ROUTER_IMAGE)" \
 		.
 
-verify: fmt-check lint test-race generated-check contracts platform smoke build-linux
+verify: fmt-check lint test-race vulncheck generated-check contracts platform smoke build-linux
 
 clean:
 	rm -rf dist

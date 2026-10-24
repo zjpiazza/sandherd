@@ -114,6 +114,10 @@ runs verification, builds both supported Linux architectures, and builds every
 container target for amd64 and arm64. Branch protection should require all jobs
 from the `CI` workflow.
 
+`make verify` includes a pinned `govulncheck` scan of reachable Go symbols across
+all commands. The separate Codex image scan also checks its OS packages. Both
+are needed: scanning only an agent image does not cover control-plane modules.
+
 Trusted `release/**` branches also publish all runtime images to GHCR, tagged
 `sha-<full Git commit>`, after repository verification and the Codex
 provenance/vulnerability check pass. Every image includes amd64 and arm64
