@@ -5,17 +5,32 @@ cd "$repo_root"
 cluster_name=sandherd-release-acceptance
 context="kind-$cluster_name"
 namespace=sandherd-test
-if kind get clusters | rg -qx "$cluster_name"; then
-  printf '%s\n' 'Refusing to reuse or delete an existing acceptance cluster.' >&2
-  exit 2
-fi
+for dependency in kind kubectl helm python3 go openssl; do
+  command -v "$dependency" >/dev/null || { printf 'Required command missing: %s\n' "$dependency" >&2; exit 2; }
+done
+existing_clusters=$(kind get clusters)
+while IFS= read -r existing_cluster; do
+  if [ "$existing_cluster" = "$cluster_name" ]; then
+    printf '%s\n' 'Refusing to reuse or delete an existing acceptance cluster.' >&2
+    exit 2
+  fi
+done <<< "$existing_clusters"
 scratch=$(mktemp -d)
 forward_pid=
 created=false
 cleanup() {
+  result=$?
   if [ -n "$forward_pid" ]; then kill "$forward_pid" 2>/dev/null || true; fi
-  if [ "$created" = true ]; then kind delete cluster --name "$cluster_name"; fi
+  if [ "$created" = true ]; then
+    if [ "$result" -ne 0 ]; then
+      mkdir -p dist/test-results
+      kubectl --context "$context" get pods -A -o wide > dist/test-results/pods.txt 2>&1 || true
+      kubectl --context "$context" get events -A --sort-by=.metadata.creationTimestamp > dist/test-results/events.txt 2>&1 || true
+    fi
+    kind delete cluster --name "$cluster_name"
+  fi
   rm -rf "$scratch"
+  exit "$result"
 }
 trap cleanup EXIT
 export KUBECONFIG="$scratch/kubeconfig"
@@ -40,7 +55,10 @@ with open(sys.argv[2],'w') as out:
  json.dump({'network':{'apiServerCIDRs':[ip+('/128' if ':' in ip else '/32') for ip in sorted(addresses)]},'router':{'replicas':1}},out)
 PY
 helm package charts/sandherd --destination "$scratch"
-chart=$(rg --files "$scratch" -g 'sandherd-*.tgz')
+shopt -s nullglob
+charts=("$scratch"/sandherd-*.tgz)
+[ "${#charts[@]}" -eq 1 ] || { printf '%s\n' 'Expected exactly one packaged chart.' >&2; exit 2; }
+chart=${charts[0]}
 helm install sandherd "$chart" --kube-context "$context" -n "$namespace" -f "$scratch/values.json" --wait --timeout 4m
 kubectl --context "$context" -n "$namespace" port-forward service/sandherd-control-plane 18080:8080 > "$scratch/forward.log" 2>&1 &
 forward_pid=$!
