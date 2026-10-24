@@ -102,6 +102,12 @@ RUN apk add --no-cache bash ca-certificates openssh-server openssh-client tini &
     mkdir -p /var/empty && chmod 0755 /var/empty
 COPY --from=build /out/herdr-bridge /usr/local/bin/sandherd-herdr-bridge
 COPY --from=herdr-download /herdr /usr/local/bin/herdr
+COPY herdr-plugin.toml /tmp/herdr-plugin.toml
+# The gateway ships the compiled bridge; activation needs no compiler or network.
+RUN mkdir -p /opt/sandherd && \
+    sed '/^\[\[build\]\]/,/^$/d;s|"bin/sandherd-herdr-bridge"|"/usr/local/bin/sandherd-herdr-bridge"|g' \
+      /tmp/herdr-plugin.toml > /opt/sandherd/herdr-plugin.toml && \
+    rm /tmp/herdr-plugin.toml
 COPY build/herdr-gateway/sshd_config /etc/ssh/sshd_config
 COPY --chmod=0755 build/herdr-gateway/entrypoint.sh /usr/local/bin/herdr-gateway-entrypoint
 ENV HOME=/home/sandherd \

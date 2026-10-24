@@ -7,11 +7,12 @@ logical Agent IDs, and the public REST and terminal protocols.
 
 ## Install
 
-After this repository is public at a released revision, install it directly
-from GitHub:
+The packaged gateway includes and activates the Sandherd plugin. No plugin build
+or source checkout is needed there. For a separately installed Herdr client,
+after the matching pre-release is published, install from that exact tag:
 
 ```sh
-herdr plugin install zjpiazza/sandherd --ref v0.1.0
+herdr plugin install zjpiazza/sandherd --ref v0.1.0-alpha.1
 ```
 
 For local development, build the bridge and link the checkout:
@@ -24,7 +25,9 @@ herdr plugin link "$PWD"
 
 Herdr validates [`herdr-plugin.toml`](../herdr-plugin.toml), creates private
 plugin config and state directories, and exposes the declared actions and pane
-entrypoints. The plugin requires Herdr 0.7.4 or newer on Linux or macOS.
+entrypoints. The manifest requires Herdr 0.7.4 or newer on Linux or macOS; the
+packaged gateway pins and tests Herdr 0.9.1. A source installation needs Go to
+build the bridge.
 
 ## Configure
 

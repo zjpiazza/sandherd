@@ -11,6 +11,8 @@ chmod 0600 "$XDG_RUNTIME_DIR/ssh_host_ed25519_key"
 cp /var/run/secrets/sandherd-herdr/authorized_keys "$HOME/.ssh/authorized_keys"
 chmod 0600 "$HOME/.ssh/authorized_keys"
 cd "$HOME"
+# Refresh registration after image upgrades while retaining plugin state.
+herdr plugin link /opt/sandherd >/dev/null
 
 herdr_pid=
 sshd_pid=
