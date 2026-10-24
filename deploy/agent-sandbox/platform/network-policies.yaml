@@ -62,6 +62,16 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: sandherd-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sandherd-control-plane
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
               sandherd.dev/router-clients: "true"
           podSelector:
             matchLabels:

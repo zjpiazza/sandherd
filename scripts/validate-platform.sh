@@ -95,6 +95,7 @@ if grep -Eq 'claimName: sandherd-codex-auth|kind: Secret|refresh_token' "$render
   printf '%s\n' 'Codex sandbox runtime exposes coordinator credential authority' >&2
   exit 1
 fi
+kustomize "$repo_root/deploy/agent-runtime/codex-openrouter" >/dev/null
 kustomize "$repo_root/deploy/control-plane" >"$rendered"
 kustomize "$repo_root/deploy/control-plane-homelab" >"$rendered"
 
@@ -134,5 +135,8 @@ if grep -A80 'kind: Role' "$rendered" | grep -Eq 'resources: \[(deployments|stat
   printf '%s\n' 'control-plane Role can create arbitrary workloads' >&2
   exit 1
 fi
+
+kustomize "$repo_root/deploy/herdr-gateway" >/dev/null
+kustomize "$repo_root/deploy/herdr-gateway-homelab" >/dev/null
 
 printf '%s\n' 'Agent Sandbox platform manifests are valid.'

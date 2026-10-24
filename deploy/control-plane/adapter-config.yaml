@@ -24,6 +24,14 @@ data:
               "warmPool": "sandherd-codex",
               "command": ["/usr/local/bin/codex-launcher", "-c", "cli_auth_credentials_store=\"file\"", "-c", "forced_login_method=\"chatgpt\"", "--dangerously-bypass-approvals-and-sandbox", "--no-alt-screen"],
               "healthCheck": ["/usr/local/bin/codex", "--version"]
+            },
+            {
+              "sandboxProfile": "standard",
+              "credentialProfile": "openrouter",
+              "credentialMode": "immutable",
+              "warmPool": "sandherd-standard-openrouter",
+              "command": ["/usr/local/bin/codex-launcher", "-c", "model_provider=\"openrouter\"", "-c", "model=\"openai/gpt-4.1-mini\"", "-c", "model_providers.openrouter.name=\"OpenRouter\"", "-c", "model_providers.openrouter.base_url=\"https://openrouter.ai/api/v1\"", "-c", "model_providers.openrouter.wire_api=\"responses\"", "-c", "model_providers.openrouter.env_key=\"OPENROUTER_API_KEY\"", "--dangerously-bypass-approvals-and-sandbox", "--no-alt-screen"],
+              "healthCheck": ["/usr/local/bin/codex", "--version"]
             }
           ]
         },

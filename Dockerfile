@@ -62,6 +62,20 @@ RUN apk add --no-cache ca-certificates curl zstd && \
     zstd --decompress "/tmp/${asset}" -o /codex && \
     chmod 0755 /codex
 
+FROM --platform=$BUILDPLATFORM alpine:3.23.5@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 AS herdr-download
+ARG TARGETARCH
+RUN apk add --no-cache ca-certificates curl && \
+    case "$TARGETARCH" in \
+      amd64) asset=herdr-linux-x86_64; checksum=2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7 ;; \
+      arm64) asset=herdr-linux-aarch64; checksum=f4ccf4de745f2cb9a39a983e9ba3703dad50ec2a58dea83026ceab721bbd8d9e ;; \
+      *) printf 'Unsupported Herdr architecture: %s\n' "$TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    curl --fail --location --silent --show-error \
+      "https://github.com/herdrdev/herdr/releases/download/v0.9.1/${asset}" \
+      --output /herdr && \
+    printf '%s  /herdr\n' "$checksum" | sha256sum -c - && \
+    chmod 0755 /herdr
+
 FROM scratch AS runtime
 USER 65532:65532
 
@@ -76,6 +90,26 @@ ENTRYPOINT ["/sandherd"]
 FROM runtime AS herdr-bridge
 COPY --from=build /out/herdr-bridge /sandherd
 ENTRYPOINT ["/sandherd"]
+
+FROM alpine:3.23.5@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 AS herdr-gateway
+RUN apk add --no-cache bash ca-certificates openssh-server openssh-client tini && \
+    addgroup -g 65532 sandherd && \
+    adduser -D -u 65532 -G sandherd -h /home/sandherd -s /bin/bash sandherd && \
+    passwd -d sandherd && \
+    mkdir -p /var/empty && chmod 0755 /var/empty
+COPY --from=build /out/herdr-bridge /usr/local/bin/sandherd-herdr-bridge
+COPY --from=herdr-download /herdr /usr/local/bin/herdr
+COPY build/herdr-gateway/sshd_config /etc/ssh/sshd_config
+COPY --chmod=0755 build/herdr-gateway/entrypoint.sh /usr/local/bin/herdr-gateway-entrypoint
+ENV HOME=/home/sandherd \
+    SHELL=/bin/bash \
+    XDG_RUNTIME_DIR=/tmp/sandherd-herdr \
+    SANDHERD_CONFIG_FILE=/etc/sandherd/config.json \
+    HERDR_PLUGIN_STATE_DIR=/home/sandherd/.local/state/sandherd
+USER 65532:65532
+WORKDIR /home
+EXPOSE 2222
+ENTRYPOINT ["/sbin/tini", "-g", "--", "/usr/local/bin/herdr-gateway-entrypoint"]
 
 FROM runtime AS workspace-bootstrap
 COPY --from=build /out/workspace-bootstrap /sandherd

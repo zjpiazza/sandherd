@@ -74,6 +74,7 @@ jobs:
           - workspace-bootstrap
           - agent-runtime
           - codex-runtime
+          - herdr-gateway
     steps:
       - name: Check out repository
         uses: actions/checkout@v7

@@ -6,7 +6,7 @@ VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= unknown
 BINARIES := control-plane runner herdr-bridge workspace-bootstrap codex-auth codex-launcher
-CONTAINER_TARGETS := control-plane runner herdr-bridge workspace-bootstrap agent-runtime codex-runtime
+CONTAINER_TARGETS := control-plane runner herdr-bridge workspace-bootstrap agent-runtime codex-runtime herdr-gateway
 KUSTOMIZE_VERSION ?= v5.8.1
 AGENT_SANDBOX_ROUTER_IMAGE ?= sandherd/agent-sandbox-router:v0.5.3
 LDFLAGS := -s -w -X github.com/zjpiazza/sandherd/internal/buildinfo.Version=$(VERSION) -X github.com/zjpiazza/sandherd/internal/buildinfo.Commit=$(COMMIT) -X github.com/zjpiazza/sandherd/internal/buildinfo.Date=$(BUILD_DATE)
