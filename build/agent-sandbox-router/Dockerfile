@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-ARG GO_VERSION=1.26.2
+ARG GO_VERSION=1.26.10
 
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}@sha256:b54cbf583d390341599d7bcbc062425c081105cc5ef6d170ced98ef9d047c716 AS build
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine@sha256:27f2d3b83cfc5803c8078f8e730af0f7c431bf067afaec8f60a36fb763187cba AS build
 WORKDIR /src
 
 ADD --checksum=sha256:5c154ff2525bcad4564744e052af1a527465fff4047c00a007fda1beb8e0e7e8 \

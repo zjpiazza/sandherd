@@ -2,7 +2,7 @@ module github.com/zjpiazza/sandherd
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.10
 
 require (
 	github.com/coder/websocket v1.8.15
