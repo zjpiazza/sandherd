@@ -1,0 +1,72 @@
+{
+  "capturedAt": "2026-10-24",
+  "status": "research-only; no new runtime profiles are advertised or enabled",
+  "gvisor": {
+    "liveTalosVersion": "v1.13.0",
+    "liveNodes": ["comet", "nova", "orbit"],
+    "liveRuntimeClasses": [],
+    "installedExtensionsReported": [],
+    "officialCatalogCandidates": [
+      {"talos": "v1.13.0", "gvisor": "20260406.0", "digest": "sha256:e01fff235d168bade44ab5a0edc3779a6151519698e085daf974b7aff7359edf"},
+      {"talos": "v1.13.12", "gvisor": "20260810.0", "digest": "sha256:a58c5b4c23fbfff00ba698763508de8b7bacd3d87f1f8231f8aee36272395704"},
+      {"talos": "v1.14.4", "gvisor": "20260831.0", "digest": "sha256:cfcfb746741b73354a37367cfba5239192f5aa91a4d6061b573425a455c93b95"}
+    ],
+    "finding": "These catalog versions predate the verified October 9 systrap spinning-queue fix. Do not approve a default runsc rollout solely from the catalog pin. Select a patched Talos-compatible extension or separately validate the official runsc-kvm handler and node KVM support.",
+    "fixCommit": "c7f458aa30f9494c42f3ff2e8075263b1ddced04",
+    "upstreamReleaseCandidate": "release-20261019.0",
+    "nodeConfigurationRequirement": {"machine.sysctls.user.max_user_namespaces": "11255"},
+    "configurationTradeoff": "The official extension requires enabling unprivileged user namespace creation, changing the Talos KSPP hardening default. No machine configuration, node label, reboot or extension rollout was performed.",
+    "remaining": [
+      "Build or select and verify a Talos-compatible patched extension; pin the complete boot asset.",
+      "Prepare one-node canary, protected eligibility labels, explicit RuntimeClass, drain/reboot and rollback procedures before requesting node-change approval.",
+      "Verify actual containerd handler use, Cilium/Ceph/DNS/PTY behavior, mixed-node scheduling failure, overhead and complete lifecycle acceptance."
+    ],
+    "sources": [
+      "https://github.com/siderolabs/extensions/blob/v1.13.12/container-runtime/gvisor/README.md",
+      "https://factory.talos.dev/version/v1.13.0/extensions/official",
+      "https://factory.talos.dev/version/v1.13.12/extensions/official",
+      "https://factory.talos.dev/version/v1.14.4/extensions/official",
+      "https://github.com/google/gvisor/issues/15572",
+      "https://github.com/google/gvisor/commit/c7f458aa30f9494c42f3ff2e8075263b1ddced04"
+    ]
+  },
+  "adapterCandidates": [
+    {
+      "issue": 27,
+      "adapter": "claude-code",
+      "version": "2.1.310",
+      "distribution": "https://github.com/anthropics/claude-code/releases/tag/v2.1.310",
+      "authentication": "Official setup-token creates a one-year subscription token consumed through CLAUDE_CODE_OAUTH_TOKEN. It does not save the token. Bootstrap must happen in a protected operator session. Per-Agent configuration and session state must remain separate.",
+      "source": "https://code.claude.com/docs/en/authentication#generate-a-long-lived-token",
+      "remaining": "Image/adapter implementation, verified capability tests, protected bootstrap and live concurrent authentication/session acceptance."
+    },
+    {
+      "issue": 28,
+      "adapter": "opencode",
+      "version": "1.19.4",
+      "distribution": "https://github.com/anomalyco/opencode/releases/tag/v1.19.4",
+      "remaining": "Image/adapter implementation, operator-only provider and extension configuration, two fake provider fixtures, immutable/OAuth credential tests and live provider acceptance."
+    },
+    {
+      "issue": 29,
+      "adapter": "pi",
+      "version": "1.4.0",
+      "distribution": "https://github.com/earendil-works/pi/releases/tag/v1.4.0",
+      "identityFinding": "The issue's badlogic/pi-mono URL redirects to earendil-works/pi. Its current official coding-agent package is @earendil-works/pi-coding-agent; record the upstream rename explicitly when implementing the existing Pi issue.",
+      "policyControls": ["--no-approve", "--no-extensions", "--no-mcp", "--no-skills", "--no-prompt-templates", "--no-themes", "--offline"],
+      "source": "https://github.com/earendil-works/pi/blob/v1.4.0/packages/coding-agent/docs/cli.md",
+      "remaining": "Image/adapter implementation, locked provider profiles, negative project/extension tests, session behavior and live provider acceptance."
+    },
+    {
+      "issue": 30,
+      "adapter": "grok-build",
+      "version": "1.0.70",
+      "distribution": "https://x.ai/cli/install.sh",
+      "officialPackage": "@xai-official/grok",
+      "identityFinding": "The official xai-org/grok-build repository contains source but no GitHub releases at capture time. Its README links the x.ai installer; official enterprise docs also identify the npm distribution. Architecture-specific npm packages publish integrity metadata.",
+      "authentication": "Official docs support XAI_API_KEY for headless automation and device/browser OIDC with refresh for interactive subscriptions. Using the official grok binary is required; an xAI API client alone does not satisfy this adapter.",
+      "source": "https://docs.x.ai/build/enterprise",
+      "remaining": "Image/adapter implementation, verified official artifacts, separate credentials/session scopes, pinned policy, interactive/headless tests and live account acceptance."
+    }
+  ]
+}

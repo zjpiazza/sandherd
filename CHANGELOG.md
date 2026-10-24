@@ -8,12 +8,14 @@
   runtime and network settings in immutable per-Agent templates.
 - Recover completed runner Pods and allow operators to stop stalled Agents.
 - Preserve terminal replay, durable workspaces, and native Codex session resume.
+- Activate the prebuilt Herdr plugin in the gateway; reset stale replay cursors
+  when a resumed runner rejects them during attachment.
 - Centralize subscription credential refresh; reject expired snapshots and
   surface redacted credential failures with recovery after reauthentication.
 - Publish digest-pinned amd64/arm64 images with SBOM and provenance metadata;
   patch reachable Go and image vulnerabilities and add CI checks.
 - Add installed lifecycle, recovery, release upgrade/rollback, isolation, and
-  repository backup/restore tests.
+  repository backup/restore tests, plus full Herdr SSH/plugin lifecycle acceptance.
 
 This pre-release remains under acceptance testing. gVisor rollout, warm-pool
 performance, idle policy enforcement, and additional coding-agent adapters are

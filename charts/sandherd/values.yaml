@@ -3,7 +3,7 @@ images:
   controlPlane: ghcr.io/zjpiazza/sandherd-control-plane@sha256:e8799afe0d0feef8fa176d8ca467a7b4f3efbbd8f170ae35660244d709d1db12
   agentRuntime: ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:cb633c73d7c6fe05ecdbda1ae5fe155f5b940c2c2343ce16ddca5c2467312afb
   codexRuntime: ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:c1e8917a49805e02e0e3ecd7ee227e520bf0d35bd1c58c18c0f00ac8b074aa4c
-  herdrGateway: ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:4dcab25b5aaedc925102c660ca7d1bd0bfc20b9a9c24df3badf163991c5b7675
+  herdrGateway: ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:6c6fccc1eb13c9a703e3c71c94b2a0c3614cf9c7810005c3941eaeb0562ea2aa
   router: ghcr.io/zjpiazza/sandherd-agent-sandbox-router@sha256:b1290cc3fcdb171ad938b71bd442de3624781ab650f572d9b9c98b359054aa91
 clusterDomain: cluster.local
 storage:

@@ -38,5 +38,10 @@
     "recovered Pod retains requested CPU and memory",
     "deleted test agent and verified cleanup"
   ],
-  "sourceRevision": "c9f802d90e83f9d6830ba4d20f72b60793cfc055 plus pending chart sources"
+  "sourceRevision": "c9f802d90e83f9d6830ba4d20f72b60793cfc055 plus pending chart sources",
+  "followup": {
+    "installedReleaseCI": "https://github.com/zjpiazza/sandherd/actions/runs/40099635653",
+    "result": "All 13 jobs passed after removing the undeclared rg dependency.",
+    "herdrEvidence": "docs/platform/herdr-release-verification-2026-10-24.json"
+  }
 }

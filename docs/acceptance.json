@@ -21,12 +21,16 @@
         {
           "artifact": "docs/platform/helm-verification-2026-10-24.json",
           "proves": "Packaged installation on a two-node kind cluster; actual limits, terminal/recovery, network allow/deny, upgrade/rollback, retained data and quiescent repository backup/restore. Optional full Herdr/Codex release acceptance remains outstanding."
+        },
+        {
+          "artifact": "docs/platform/herdr-release-verification-2026-10-24.json",
+          "proves": "Helm-installed Herdr plugin, pinned SSH host identity, real remote TUI, input, detach/replay, stop/resume, retained data and cleanup with the published gateway image."
         }
       ],
       "remaining": [
         "Homelab resource-budget rollout awaits explicit namespace RBAC approval.",
-        "Verify the new installed-release CI job and publish the release bundle after license selection.",
-        "Complete Herdr/Codex acceptance through the packaged release, including long-lived auth refresh and revocation/reauthentication.",
+        "Publish the release bundle after project license selection and final CI acceptance.",
+        "Complete Codex acceptance through the packaged release, including long-lived auth refresh and account-level revocation/reauthentication.",
         "Grant repository Actions access to existing GHCR packages so automated image publication can finish."
       ]
     },
@@ -36,7 +40,12 @@
       "url": "https://github.com/zjpiazza/sandherd/issues/11",
       "requirements": "## Goal\n\nMove agent workloads from ordinary container isolation to a tested gVisor runtime boundary on Talos without changing client behavior.\n\n## Scope\n\n- Build or select Talos boot assets with the official Sidero Labs gVisor system extension.\n- Roll the extension across nodes safely and register a `RuntimeClass`.\n- Add node labels/taints or scheduling rules so unsupported nodes cannot receive hardened sandboxes.\n- Add a gVisor-backed `SandboxTemplate` and make isolation profile selectable by policy.\n- Validate Cilium networking, Ceph PVCs, DNS, runner PTY behavior, router access, and agent CLI compatibility under gVisor.\n- Document rollback and workloads known to require the standard runtime.\n\n## Acceptance criteria\n\n- [ ] `RuntimeClass` scheduling demonstrably uses gVisor/runsc on every eligible sandbox.\n- [ ] Agents cannot silently fall back to the standard runtime when gVisor is requested.\n- [ ] Core Sandherd lifecycle, terminal, storage, and network-policy end-to-end tests pass.\n- [ ] Failed scheduling reports an actionable isolation/runtime error.\n- [ ] Node rollout and rollback procedures preserve cluster availability.\n- [ ] Runtime overhead is measured and documented against the standard-container baseline.\n\n## Test plan\n\n- Runtime verification from Kubernetes and Talos/containerd state.\n- System-call compatibility suite for supported agent images.\n- Network and filesystem isolation probes.\n- Node drain, reboot, and mixed-runtime scheduling tests.\n\n## Out of scope\n\n- Kata Containers.\n- Claiming a complete defense against all container escapes.\n- GPU workloads unless explicitly validated.\n\n## Dependencies\n\n- Depends on #10 for the working MVP deployment and end-to-end suite.\n- Talos administrative access beyond ordinary Kubernetes credentials.\n",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        {
+          "artifact": "docs/platform/runtime-investigation-2026-10-24.json",
+          "proves": "Official upstream distribution/configuration investigation only; runtime implementation and live acceptance remain incomplete."
+        }
+      ],
       "remaining": []
     },
     {
@@ -81,7 +90,12 @@
       "url": "https://github.com/zjpiazza/sandherd/issues/27",
       "requirements": "## Outcome\n\nSandherd can run Claude Code as an isolated, persistent agent with autonomous creation and destruction after a platform credential has been configured once.\n\n## Scope\n\n- Package a pinned, verified Claude Code release in a dedicated runtime image.\n- Implement the adapter contract from #25 for PTY startup, optional non-interactive execution, readiness, shutdown, and native session continuation.\n- Support Claude App Pro/Max subscription authentication as the first personal-use credential strategy.\n- Design the adapter so Anthropic API, Amazon Bedrock, and Google Vertex credential profiles can be added without changing the lifecycle API.\n- Identify Claude Code's writable credential, configuration, project, and session paths and keep their persistence scopes separate.\n- Document supported environment variables, egress, MCP configuration, and upgrade behavior.\n\n## Acceptance criteria\n\n- [ ] A platform credential can be bootstrapped once and reused by newly created Claude Code agents without per-agent login.\n- [ ] Two Claude Code agents can run concurrently, including an authentication refresh/revalidation test where supported.\n- [ ] Attach, detach, stop, resume, sandbox recreation, and deletion have documented and tested behavior.\n- [ ] Subscription state is durable but project configuration, sessions, and workspaces remain agent-isolated.\n- [ ] The adapter advertises only capabilities verified against the pinned version.\n- [ ] Authentication failures are redacted and surfaced as stable Sandherd states.\n- [ ] The runtime image and upstream version are pinned and reproducible.\n- [ ] A live homelab smoke test is documented.\n\n## Non-goals\n\n- Making Anthropic-specific fields part of the public Agent API.\n- Requiring all optional enterprise providers in the first implementation.\n- Sharing Claude project/session state among otherwise separate agents.\n\n## Dependencies\n\nBlocked by #25. The subscription credential investigation should reuse the mutable-credential lessons from #26 without assuming the file layout or refresh behavior is identical.\n\n## Upstream references\n\n- https://github.com/anthropics/claude-code\n- https://docs.anthropic.com/en/docs/claude-code/getting-started\n",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        {
+          "artifact": "docs/platform/runtime-investigation-2026-10-24.json",
+          "proves": "Official upstream distribution/configuration investigation only; runtime implementation and live acceptance remain incomplete."
+        }
+      ],
       "remaining": []
     },
     {
@@ -90,7 +104,12 @@
       "url": "https://github.com/zjpiazza/sandherd/issues/28",
       "requirements": "## Outcome\n\nSandherd can run OpenCode as an isolated agent while keeping the OpenCode harness selection independent from the configured LLM provider and credential profile.\n\n## Scope\n\n- Package a pinned, verified OpenCode release in a dedicated runtime image.\n- Implement the adapter contract from #25 for interactive PTY startup, headless/run mode, readiness, shutdown, and session continuation.\n- Support an operator-selected OpenCode provider/model configuration through allowlisted Sandherd profiles.\n- Support both immutable API-key credentials and refreshable OAuth credentials where the selected provider supports them.\n- Evaluate OpenCode's server/attach mode as an optional native transport, while retaining Sandherd's terminal API as the client-neutral boundary.\n- Separate OpenCode auth data, global configuration, sessions, and repository workspace persistence.\n\n## Acceptance criteria\n\n- [ ] The same OpenCode adapter works with at least two test provider profiles without changing the Sandherd lifecycle API.\n- [ ] The caller cannot inject arbitrary provider packages, endpoints, headers, or environment variables outside an operator allowlist.\n- [ ] Provider credentials are redacted and mounted only into the selected agent.\n- [ ] Attach, detach, stop, resume, sandbox recreation, and deletion are tested and documented.\n- [ ] Session selection/resume maps cleanly to Sandherd's agent lifecycle or is explicitly reported as unsupported.\n- [ ] The runtime image and OpenCode version are pinned and reproducible.\n- [ ] A fake-provider contract test runs in CI without consuming paid model tokens.\n- [ ] A live homelab smoke test using an operator-selected real provider is documented.\n\n## Non-goals\n\n- Exposing the complete OpenCode provider schema through the Sandherd public API.\n- Promising support for every provider listed by OpenCode.\n- Replacing Sandherd authentication with OpenCode server authentication.\n\n## Dependencies\n\nBlocked by #25.\n\n## Upstream references\n\n- https://github.com/anomalyco/opencode\n- https://opencode.ai/docs/providers\n- https://opencode.ai/docs/cli\n",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        {
+          "artifact": "docs/platform/runtime-investigation-2026-10-24.json",
+          "proves": "Official upstream distribution/configuration investigation only; runtime implementation and live acceptance remain incomplete."
+        }
+      ],
       "remaining": []
     },
     {
@@ -99,7 +118,12 @@
       "url": "https://github.com/zjpiazza/sandherd/issues/29",
       "requirements": "## Outcome\n\nSandherd can run the Pi coding agent in an isolated sandbox with operator-controlled models, credentials, extensions, and session persistence.\n\nThis ticket targets the @mariozechner/pi-coding-agent CLI from the Pi monorepo, not Raspberry Pi hardware.\n\n## Scope\n\n- Package a pinned, verified Pi coding-agent release in a dedicated runtime image.\n- Implement the adapter contract from #25 for its interactive TUI, print/headless mode where appropriate, readiness, shutdown, and session resume.\n- Model Pi as a multi-provider harness: provider, model, and credential selection comes from an allowlisted Sandherd profile.\n- Determine persistence boundaries for Pi auth, settings, sessions, extensions, prompts, and workspace files.\n- Define an operator policy for bundled or user-selected Pi extensions; untrusted extensions must not bypass sandbox controls or secret scoping.\n- Document MCP/tool configuration, egress requirements, and version upgrades.\n\n## Acceptance criteria\n\n- [ ] The runtime starts the pinned Pi CLI under the standard runner and reports a useful health/version result.\n- [ ] At least two provider-profile fixtures validate that harness and provider are independent concerns.\n- [ ] Interactive attach and supported headless execution both pass contract tests.\n- [ ] Attach, detach, stop, resume, sandbox recreation, and deletion have documented behavior.\n- [ ] Auth data, global configuration, extensions, sessions, and repository workspace use explicit persistence scopes.\n- [ ] Arbitrary extensions and provider endpoints are disabled unless an operator profile enables them.\n- [ ] Credentials never appear in API responses, events, logs, or workspace snapshots.\n- [ ] A live homelab smoke test is documented.\n\n## Non-goals\n\n- Supporting every Pi package in the upstream monorepo.\n- Running arbitrary third-party extensions by default.\n- Adding provider-specific fields to the public Agent API.\n\n## Dependencies\n\nBlocked by #25. Provider-profile behavior should align with #28 where the harness requirements overlap.\n\n## Upstream references\n\n- https://github.com/badlogic/pi-mono\n- https://www.npmjs.com/package/@mariozechner/pi-coding-agent\n",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        {
+          "artifact": "docs/platform/runtime-investigation-2026-10-24.json",
+          "proves": "Official upstream distribution/configuration investigation only; runtime implementation and live acceptance remain incomplete."
+        }
+      ],
       "remaining": []
     },
     {
@@ -108,7 +132,12 @@
       "url": "https://github.com/zjpiazza/sandherd/issues/30",
       "requirements": "## Outcome\n\nSandherd can run the official xAI Grok Build CLI as an isolated, persistent agent with autonomous provisioning after its platform credential is configured.\n\n## Scope\n\n- Target the official grok binary distributed from xai-org/grok-build.\n- Package a pinned, verified release in a dedicated runtime image.\n- Implement the adapter contract from #25 for the full-screen TUI, documented headless mode, readiness, graceful shutdown, and native session continuation.\n- Investigate subscription/browser authentication and any supported non-interactive credential mechanisms without requiring per-agent login.\n- Evaluate ACP support as an optional native capability while preserving Sandherd's REST/WebSocket API as the public boundary.\n- Separate credential state, Grok configuration, sessions/checkpoints, and repository workspace persistence.\n- Document required egress, web/search behavior, data-handling implications, and operator controls.\n\n## Acceptance criteria\n\n- [ ] The runtime image starts the pinned official grok binary and exposes version/health diagnostics.\n- [ ] A supported platform credential can provision a new agent without an interactive login inside that sandbox.\n- [ ] Interactive PTY and documented headless operation pass adapter contract tests.\n- [ ] ACP capability is either implemented and tested or explicitly excluded with rationale.\n- [ ] Attach, detach, stop, resume, sandbox recreation, and deletion have documented behavior.\n- [ ] Credentials and session data use explicit, separate persistence scopes and remain redacted.\n- [ ] Network policy documents and limits Grok-specific endpoints and web-access behavior.\n- [ ] A live homelab smoke test is documented.\n\n## Non-goals\n\n- Treating the xAI model API alone as a Grok Build agent integration.\n- Exposing xAI-specific authentication fields through the public Agent API.\n- Depending on undocumented credential extraction or refresh behavior.\n\n## Dependencies\n\nBlocked by #25. Any subscription credential mechanism must satisfy the same platform-level autonomy requirement investigated in #26 and #27.\n\n## Upstream references\n\n- https://github.com/xai-org/grok-build\n- https://x.ai/cli\n",
       "status": "pending",
-      "evidence": [],
+      "evidence": [
+        {
+          "artifact": "docs/platform/runtime-investigation-2026-10-24.json",
+          "proves": "Official upstream distribution/configuration investigation only; runtime implementation and live acceptance remain incomplete."
+        }
+      ],
       "remaining": []
     }
   ]

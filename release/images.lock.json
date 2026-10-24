@@ -31,12 +31,12 @@
     },
     {
       "component": "herdr-gateway",
-      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:4dcab25b5aaedc925102c660ca7d1bd0bfc20b9a9c24df3badf163991c5b7675",
+      "image": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:6c6fccc1eb13c9a703e3c71c94b2a0c3614cf9c7810005c3941eaeb0562ea2aa",
       "architectures": [
         "linux/amd64",
         "linux/arm64"
       ],
-      "sourceCommit": "c77077e353314ab894bc6059ba3e6a86bb75e66f"
+      "sourceCommit": "23e87620385b59d9bfda62c17e25f3dc661efdb0"
     },
     {
       "component": "agent-sandbox-router",

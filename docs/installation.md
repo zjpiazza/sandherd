@@ -139,6 +139,10 @@ For Herdr, create the Secret named by `herdr.accessSecret` with `authorized_keys
 Set `herdr.enabled: true`. Its default Agent is shell, or Codex when enabled.
 The SSH host key must be provisioned and verified by the operator. Keep it stable
 across upgrades; never disable host-key checking. The Herdr home PVC is retained.
+The gateway activates its prebuilt Sandherd plugin at startup. Packaged shell
+acceptance covers the remote SSH TUI, manager creation, terminal input, pane
+replacement with replay, stop/resume and retained-workspace deletion. Codex
+subscription and native-session acceptance remains a separate release gate.
 
 With the Tailscale operator installed, set `tailscale.enabled: true` and choose
 `tailscale.apiHostname`. This exposes only the authenticated API. The optional

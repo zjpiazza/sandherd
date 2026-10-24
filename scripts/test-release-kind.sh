@@ -5,7 +5,7 @@ cd "$repo_root"
 cluster_name=sandherd-release-acceptance
 context="kind-$cluster_name"
 namespace=sandherd-test
-for dependency in kind kubectl helm python3 go openssl; do
+for dependency in kind kubectl helm python3 go openssl ssh ssh-keygen; do
   command -v "$dependency" >/dev/null || { printf 'Required command missing: %s\n' "$dependency" >&2; exit 2; }
 done
 existing_clusters=$(kind get clusters)
@@ -80,3 +80,6 @@ forward_pid=
 python3 scripts/test-installed-release.py --context "$context" --namespace "$namespace" \
   --chart "$chart" --values "$scratch/values.json" --token-file "$scratch/api-token" \
   --report dist/test-results/release-lifecycle.json --disposable
+python3 scripts/test-herdr-release.py --context "$context" --namespace "$namespace" \
+  --chart "$chart" --values "$scratch/values.json" --token-file "$scratch/api-token" \
+  --report dist/test-results/herdr-lifecycle.json --disposable

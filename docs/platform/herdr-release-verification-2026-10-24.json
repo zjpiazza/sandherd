@@ -1,0 +1,45 @@
+{
+  "context": "kind-sandherd-release-test",
+  "namespace": "sandherd-test",
+  "checks": [
+    "SSH uses the pinned host key and non-root public-key login",
+    "Prebuilt Sandherd plugin is installed and enabled",
+    "Herdr manager creates an Agent through the public API",
+    "Herdr plugin pane sends input and receives sandbox output",
+    "Remote Herdr terminal client attaches over SSH",
+    "SSH client disconnect preserves the running sandbox",
+    "Replacement Herdr pane replays missed output without restarting the runner",
+    "Herdr stop/resume preserves workspace contents and PVC identity",
+    "Herdr deletion honors the retained workspace policy",
+    "Test credentials, Herdr workspace and temporary volumes cleaned up"
+  ],
+  "herdrVersion": "herdr 0.9.1",
+  "gatewayImage": "ghcr.io/zjpiazza/sandherd-agent-runtime@sha256:6c6fccc1eb13c9a703e3c71c94b2a0c3614cf9c7810005c3941eaeb0562ea2aa",
+  "limitations": [
+    "Shell adapter acceptance; subscription login and native model session acceptance are separate.",
+    "SSH port-forward transport; homelab Tailscale routing has separate acceptance evidence."
+  ],
+  "capturedAt": "2026-10-24T14:09:37.626045+00:00",
+  "chartSHA256": "7d3e9d4e6f0059eee24ec1c8674c749344b5920d7f4f65020ca2b7e5add3bab2",
+  "sourceCommit": "23e87620385b59d9bfda62c17e25f3dc661efdb0",
+  "regression": "A real runner rejected a prior-generation cursor during attachment. The new regression failed before the fix and passed after durable cursor reset; the complete bridge race suite passed.",
+  "security": {
+    "scanner": "Trivy 0.72.0",
+    "policy": "--ignore-unfixed --severity HIGH,CRITICAL --scanners vuln",
+    "architectures": {
+      "amd64": {
+        "findings": 0
+      },
+      "arm64": {
+        "findings": 0
+      }
+    }
+  },
+  "homelab": {
+    "gatewayReady": true,
+    "pinnedHostSSH": true,
+    "pluginEnabled": true,
+    "homePVCPreserved": true,
+    "homePVCUID": "21e4dc4b-5ca4-4a41-8dc6-22b34ac82ebf"
+  }
+}
