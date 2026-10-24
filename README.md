@@ -213,7 +213,7 @@ Sandherd is at an early stage, so design feedback and focused prototypes are esp
 
 ## License
 
-The project license has not been selected yet. A license will be added before the first public release.
+Sandherd is licensed under the [Apache License, Version 2.0](LICENSE).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

@@ -3,7 +3,7 @@
 The `0.1.0-alpha.1` bundle is under acceptance testing and is not yet a published
 release. The commands below consume the bundle, without requiring source files.
 For development, produce that bundle with `python3 scripts/package-release.py`.
-The publisher must select a project license before publishing.
+Sandherd is licensed under Apache-2.0; the bundle includes `LICENSE`.
 
 ## Supported prerequisites
 

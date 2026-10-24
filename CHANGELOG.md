@@ -2,6 +2,7 @@
 
 ## 0.1.0-alpha.1 — unreleased
 
+- License Sandherd under Apache-2.0.
 - Package the private control plane, resource-bound runtimes, router, and optional
   Codex authentication and Herdr gateway in a versioned Helm chart.
 - Enforce requested runner CPU and memory before scheduling. Preserve approved
@@ -20,4 +21,4 @@
 This pre-release remains under acceptance testing. gVisor rollout, warm-pool
 performance, idle policy enforcement, and additional coding-agent adapters are
 tracked separately. The release is not published until its remaining acceptance
-requirements and project license are resolved.
+requirements are resolved.
